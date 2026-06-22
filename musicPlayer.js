@@ -7,6 +7,7 @@ const {
   VoiceConnectionStatus,
   entersState
 } = require('@discordjs/voice');
+const { MessageFlags } = require('discord.js');
 const play = require('play-dl');
 const { spawn, execFileSync } = require('child_process');
 
@@ -544,12 +545,12 @@ function isBotDetectionError(error) {
 async function handlePlay(interaction, query, playTop = false) {
   const voiceChannel = interaction.member.voice.channel;
   if (!voiceChannel) {
-    return interaction.reply({ content: '❌ You need to join a voice channel first!', ephemeral: true });
+    return interaction.reply({ content: '❌ You need to join a voice channel first!', flags: MessageFlags.Ephemeral });
   }
 
   const permissions = voiceChannel.permissionsFor(interaction.client.user);
   if (!permissions.has('Connect') || !permissions.has('Speak')) {
-    return interaction.reply({ content: '❌ I do not have permissions to join or speak in your voice channel!', ephemeral: true });
+    return interaction.reply({ content: '❌ I do not have permissions to join or speak in your voice channel!', flags: MessageFlags.Ephemeral });
   }
 
   await interaction.deferReply();
@@ -760,7 +761,7 @@ async function handlePlay(interaction, query, playTop = false) {
 function handleSkip(interaction) {
   const queue = queues.get(interaction.guildId);
   if (!queue || queue.songs.length === 0) {
-    return interaction.reply({ content: '❌ There is no music playing to skip!', ephemeral: true });
+    return interaction.reply({ content: '❌ There is no music playing to skip!', flags: MessageFlags.Ephemeral });
   }
 
   const success = queue.skip();
@@ -784,7 +785,7 @@ function handleSkip(interaction) {
 function handleStop(interaction) {
   const queue = queues.get(interaction.guildId);
   if (!queue) {
-    return interaction.reply({ content: '❌ I am not playing any music in this server!', ephemeral: true });
+    return interaction.reply({ content: '❌ I am not playing any music in this server!', flags: MessageFlags.Ephemeral });
   }
 
   queue.stop();
@@ -795,7 +796,7 @@ function handleStop(interaction) {
 function handlePause(interaction) {
   const queue = queues.get(interaction.guildId);
   if (!queue) {
-    return interaction.reply({ content: '❌ I am not playing any music in this server!', ephemeral: true });
+    return interaction.reply({ content: '❌ I am not playing any music in this server!', flags: MessageFlags.Ephemeral });
   }
 
   const paused = queue.pause();
@@ -811,14 +812,14 @@ function handlePause(interaction) {
         }, 5000);
       });
   } else {
-    return interaction.reply({ content: '❌ Music is already paused or not playing!', ephemeral: true });
+    return interaction.reply({ content: '❌ Music is already paused or not playing!', flags: MessageFlags.Ephemeral });
   }
 }
 
 function handleResume(interaction) {
   const queue = queues.get(interaction.guildId);
   if (!queue) {
-    return interaction.reply({ content: '❌ I am not playing any music in this server!', ephemeral: true });
+    return interaction.reply({ content: '❌ I am not playing any music in this server!', flags: MessageFlags.Ephemeral });
   }
 
   const resumed = queue.resume();
@@ -834,7 +835,7 @@ function handleResume(interaction) {
         }, 5000);
       });
   } else {
-    return interaction.reply({ content: '❌ Music is already playing or not paused!', ephemeral: true });
+    return interaction.reply({ content: '❌ Music is already playing or not paused!', flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -867,12 +868,12 @@ function handleQueue(interaction) {
 async function handleJoin(interaction) {
   const voiceChannel = interaction.member.voice.channel;
   if (!voiceChannel) {
-    return interaction.reply({ content: '❌ You need to join a voice channel first!', ephemeral: true });
+    return interaction.reply({ content: '❌ You need to join a voice channel first!', flags: MessageFlags.Ephemeral });
   }
 
   const existingQueue = queues.get(interaction.guildId);
   if (existingQueue && existingQueue.connection) {
-    return interaction.reply({ content: `✅ Already connected to **${existingQueue.voiceChannel.name}**!`, ephemeral: true });
+    return interaction.reply({ content: `✅ Already connected to **${existingQueue.voiceChannel.name}**!`, flags: MessageFlags.Ephemeral });
   }
 
   const queue = new GuildQueue(interaction.guildId, interaction.channel, voiceChannel);
@@ -911,13 +912,13 @@ function handleLeave(interaction) {
       .then(msg => setTimeout(() => msg.delete().catch(() => {}), 5000));
   }
 
-  return interaction.reply({ content: '❌ I am not in a voice channel!', ephemeral: true });
+  return interaction.reply({ content: '❌ I am not in a voice channel!', flags: MessageFlags.Ephemeral });
 }
 
 async function handleMove(interaction) {
   const voiceChannel = interaction.member.voice.channel;
   if (!voiceChannel) {
-    return interaction.reply({ content: '❌ You need to join a voice channel first!', ephemeral: true });
+    return interaction.reply({ content: '❌ You need to join a voice channel first!', flags: MessageFlags.Ephemeral });
   }
 
   const queue = queues.get(interaction.guildId);
@@ -939,7 +940,7 @@ async function handleMove(interaction) {
   }
 
   if (queue.voiceChannel.id === voiceChannel.id) {
-    return interaction.reply({ content: `❌ I am already in your voice channel!`, ephemeral: true });
+    return interaction.reply({ content: `❌ I am already in your voice channel!`, flags: MessageFlags.Ephemeral });
   }
 
   // Move connection to new VC
@@ -971,7 +972,7 @@ async function handleMove(interaction) {
 async function handleControls(interaction) {
   const queue = queues.get(interaction.guildId);
   if (!queue || queue.songs.length === 0) {
-    return interaction.reply({ content: '❌ There is no music playing to show controls for!', ephemeral: true });
+    return interaction.reply({ content: '❌ There is no music playing to show controls for!', flags: MessageFlags.Ephemeral });
   }
 
   const song = queue.songs[0];
@@ -1015,13 +1016,13 @@ async function handleControls(interaction) {
 async function handleButton(interaction) {
   const queue = queues.get(interaction.guildId);
   if (!queue) {
-    return interaction.reply({ content: '❌ No active player in this server.', ephemeral: true });
+    return interaction.reply({ content: '❌ No active player in this server.', flags: MessageFlags.Ephemeral });
   }
 
   // Ensure member is in the same voice channel
   const memberVoiceChannel = interaction.member.voice.channel;
   if (!memberVoiceChannel || memberVoiceChannel.id !== queue.voiceChannel.id) {
-    return interaction.reply({ content: '❌ You need to be in the same voice channel as the bot to use controls!', ephemeral: true });
+    return interaction.reply({ content: '❌ You need to be in the same voice channel as the bot to use controls!', flags: MessageFlags.Ephemeral });
   }
 
   const { customId } = interaction;
@@ -1053,7 +1054,7 @@ async function handleButton(interaction) {
               .setStyle(ButtonStyle.Secondary)
           );
         await interaction.message.edit({ components: [row] }).catch(console.error);
-        return interaction.reply({ content: '▶️ Resumed the music.', ephemeral: true });
+        return interaction.reply({ content: '▶️ Resumed the music.', flags: MessageFlags.Ephemeral });
       } else {
         queue.pause();
         const row = new ActionRowBuilder()
@@ -1076,21 +1077,21 @@ async function handleButton(interaction) {
               .setStyle(ButtonStyle.Secondary)
           );
         await interaction.message.edit({ components: [row] }).catch(console.error);
-        return interaction.reply({ content: '⏸️ Paused the music.', ephemeral: true });
+        return interaction.reply({ content: '⏸️ Paused the music.', flags: MessageFlags.Ephemeral });
       }
     } else if (customId === 'player_skip') {
       const success = queue.skip();
       if (success) {
-        return interaction.reply({ content: '⏭️ Skipped the current song!', ephemeral: true });
+        return interaction.reply({ content: '⏭️ Skipped the current song!', flags: MessageFlags.Ephemeral });
       } else {
-        return interaction.reply({ content: '❌ No songs left in the queue to skip.', ephemeral: true });
+        return interaction.reply({ content: '❌ No songs left in the queue to skip.', flags: MessageFlags.Ephemeral });
       }
     } else if (customId === 'player_stop') {
       queue.stop();
-      return interaction.reply({ content: '🛑 Stopped playing music and left the voice channel.', ephemeral: true });
+      return interaction.reply({ content: '🛑 Stopped playing music and left the voice channel.', flags: MessageFlags.Ephemeral });
     } else if (customId === 'player_queue') {
       if (queue.songs.length === 0) {
-        return interaction.reply({ content: '📭 The queue is currently empty.', ephemeral: true });
+        return interaction.reply({ content: '📭 The queue is currently empty.', flags: MessageFlags.Ephemeral });
       }
 
       const songList = queue.songs
@@ -1100,11 +1101,11 @@ async function handleButton(interaction) {
 
       const totalSongs = queue.songs.length;
       const queueMessage = `__**Current Queue:**__\n${songList}\n\n${totalSongs > 10 ? `*...and ${totalSongs - 10} more songs.*` : ''}`;
-      return interaction.reply({ content: queueMessage, ephemeral: true });
+      return interaction.reply({ content: queueMessage, flags: MessageFlags.Ephemeral });
     }
   } catch (error) {
     console.error('[button-error]', error);
-    return interaction.reply({ content: `⚠️ Failed to handle action: ${error.message}`, ephemeral: true });
+    return interaction.reply({ content: `⚠️ Failed to handle action: ${error.message}`, flags: MessageFlags.Ephemeral });
   }
 }
 
