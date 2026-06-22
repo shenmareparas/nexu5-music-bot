@@ -528,6 +528,16 @@ class GuildQueue {
   }
 }
 
+function isBotDetectionError(error) {
+  if (!error || !error.message) return false;
+  const msg = error.message.toLowerCase();
+  return msg.includes('429') || 
+         msg.includes('sign in to confirm') || 
+         msg.includes('confirm you\'re not a bot') || 
+         msg.includes('confirm you’re not a bot') || 
+         msg.includes('sign in to');
+}
+
 /**
  * Main module interfaces
  */
@@ -589,8 +599,8 @@ async function handlePlay(interaction, query, playTop = false) {
           return interaction.editReply(`✅ Loaded playlist **${playlist.title}** with **${videos.length}** songs to the ${playTop ? 'top of the ' : ''}queue!`);
         } catch (playlistError) {
           console.warn('[playlist-loader] Failed to load playlist, falling back to single video:', playlistError.message);
-          if (playlistError.message && playlistError.message.includes('429')) {
-            return interaction.editReply('❌ YouTube is currently rate-limiting requests (Got 429). Please try again later.');
+          if (isBotDetectionError(playlistError)) {
+            return interaction.editReply('❌ YouTube is currently blocking our requests (bot verification / rate limit). Please try another video link or search query.');
           }
           if (validationType === 'yt_video') {
             try {
@@ -602,8 +612,8 @@ async function handlePlay(interaction, query, playTop = false) {
               };
             } catch (videoError) {
               console.error('[playlist-loader] Fallback to single video also failed:', videoError.message);
-              if (videoError.message && videoError.message.includes('429')) {
-                return interaction.editReply('❌ YouTube is currently rate-limiting requests (Got 429). Please try again later.');
+              if (isBotDetectionError(videoError)) {
+                return interaction.editReply('❌ YouTube is currently blocking our requests (bot verification / rate limit). Please try another video link or search query.');
               }
               return interaction.editReply(`❌ Failed to retrieve video information: ${videoError.message}`);
             }
@@ -726,8 +736,8 @@ async function handlePlay(interaction, query, playTop = false) {
     }
   } catch (error) {
     console.error(error);
-    const msgText = (error.message && error.message.includes('429'))
-      ? '❌ YouTube is currently rate-limiting requests (Got 429). Please try again later.'
+    const msgText = isBotDetectionError(error)
+      ? '❌ YouTube is currently blocking our requests (bot verification / rate limit). Please try another video link or search query.'
       : `⚠️ An error occurred while trying to play: ${error.message}`;
     return interaction.editReply(msgText)
       .then(msg => {
