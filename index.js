@@ -74,6 +74,22 @@ const commands = [
       option.setName('query')
         .setDescription('Song name or link')
         .setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('playtop')
+    .setDescription('Add a song to the top of the queue')
+    .addStringOption(option =>
+      option.setName('query')
+        .setDescription('Song name or link')
+        .setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('pehle')
+    .setDescription('Pehle ye suna! (Play at the top of the queue)')
+    .addStringOption(option =>
+      option.setName('query')
+        .setDescription('Song name or link')
+        .setRequired(true)
     )
 ].map(command => command.toJSON());
 
@@ -137,6 +153,9 @@ client.on('interactionCreate', async interaction => {
     if (commandName === 'play' || commandName === 'suna') {
       const query = interaction.options.getString('query');
       await musicPlayer.handlePlay(interaction, query);
+    } else if (commandName === 'playtop' || commandName === 'pehle') {
+      const query = interaction.options.getString('query');
+      await musicPlayer.handlePlay(interaction, query, true);
     } else if (commandName === 'skip') {
       await musicPlayer.handleSkip(interaction);
     } else if (commandName === 'stop') {

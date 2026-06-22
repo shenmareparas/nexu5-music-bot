@@ -224,10 +224,14 @@ class GuildQueue {
     this.connection.subscribe(this.player);
   }
 
-  async addSong(song, user) {
+  async addSong(song, user, playTop = false, insertIndex = 1) {
     song.requestedBy = user;
-    this.songs.push(song);
-    console.log(`[queue] Added song: ${song.title} (${song.url})`);
+    if (playTop && this.songs.length > 0) {
+      this.songs.splice(insertIndex, 0, song);
+    } else {
+      this.songs.push(song);
+    }
+    console.log(`[queue] Added song: ${song.title} (${song.url}) (playTop: ${playTop}, insertIndex: ${insertIndex})`);
 
     if (!this.playing) {
       this.playing = true;
@@ -527,7 +531,7 @@ class GuildQueue {
 /**
  * Main module interfaces
  */
-async function handlePlay(interaction, query) {
+async function handlePlay(interaction, query, playTop = false) {
   const voiceChannel = interaction.member.voice.channel;
   if (!voiceChannel) {
     return interaction.reply({ content: '❌ You need to join a voice channel first!', ephemeral: true });
@@ -557,6 +561,45 @@ async function handlePlay(interaction, query) {
           url: searchResults[0].url,
           duration: searchResults[0].durationRaw
         };
+      } else if (validationType === 'yt_playlist' || (validationType === 'yt_video' && query.includes('list='))) {
+        // Grab playlist info and play all videos
+        try {
+          console.log(`[playlist-loader] Attempting to load playlist from query: ${query}`);
+          const playlist = await play.playlist_info(query);
+          const videos = await playlist.all_videos();
+          if (videos.length === 0) {
+            throw new Error('No videos found in that playlist!');
+          }
+
+          let queue = queues.get(interaction.guildId);
+          if (!queue) {
+            queue = new GuildQueue(interaction.guildId, interaction.channel, voiceChannel);
+            queues.set(interaction.guildId, queue);
+          }
+
+          let insertIndex = 1;
+          for (const video of videos) {
+            await queue.addSong({
+              title: video.title,
+              url: video.url,
+              duration: video.durationRaw
+            }, interaction.user, playTop, insertIndex++);
+          }
+
+          return interaction.editReply(`✅ Loaded playlist **${playlist.title}** with **${videos.length}** songs to the ${playTop ? 'top of the ' : ''}queue!`);
+        } catch (playlistError) {
+          console.warn('[playlist-loader] Failed to load playlist, falling back to single video:', playlistError.message);
+          if (validationType === 'yt_video') {
+            const videoInfo = await play.video_info(query);
+            songInfo = {
+              title: videoInfo.video_details.title,
+              url: videoInfo.video_details.url,
+              duration: videoInfo.video_details.durationRaw
+            };
+          } else {
+            return interaction.editReply(`❌ Failed to retrieve playlist information: ${playlistError.message}`);
+          }
+        }
       } else if (validationType === 'yt_video') {
         const videoInfo = await play.video_info(query);
         songInfo = {
@@ -564,29 +607,6 @@ async function handlePlay(interaction, query) {
           url: videoInfo.video_details.url,
           duration: videoInfo.video_details.durationRaw
         };
-      } else if (validationType === 'yt_playlist') {
-        // Grab playlist info and play the first video, or enqueue multiple
-        const playlist = await play.playlist_info(query);
-        const videos = await playlist.all_videos();
-        if (videos.length === 0) {
-          return interaction.editReply('❌ No videos found in that playlist!');
-        }
-
-        let queue = queues.get(interaction.guildId);
-        if (!queue) {
-          queue = new GuildQueue(interaction.guildId, interaction.channel, voiceChannel);
-          queues.set(interaction.guildId, queue);
-        }
-
-        for (const video of videos) {
-          await queue.addSong({
-            title: video.title,
-            url: video.url,
-            duration: video.durationRaw
-          }, interaction.user);
-        }
-
-        return interaction.editReply(`✅ Loaded playlist **${playlist.title}** with **${videos.length}** songs!`);
       }
     } else if (validationType === 'sp_track' || validationType === 'sp_playlist' || validationType === 'sp_album') {
       // play-dl handles spotify redirection to youtube automatically
@@ -628,6 +648,7 @@ async function handlePlay(interaction, query) {
         }
 
         let loadedCount = 0;
+        let insertIndex = 1;
         for (const track of tracks) {
           const searchResults = await play.search(`${track.name} ${track.artists.map(a => a.name).join(' ')}`, { limit: 1 });
           if (searchResults.length > 0) {
@@ -635,11 +656,11 @@ async function handlePlay(interaction, query) {
               title: track.name,
               url: searchResults[0].url,
               duration: searchResults[0].durationRaw
-            }, interaction.user);
+            }, interaction.user, playTop, insertIndex++);
             loadedCount++;
           }
         }
-        return interaction.followUp(`✅ Loaded **${loadedCount}** tracks from Spotify list!`);
+        return interaction.followUp(`✅ Loaded **${loadedCount}** tracks from Spotify list to the ${playTop ? 'top of the ' : ''}queue!`);
       }
     } else {
       // Attempt generic search as fallback
@@ -664,10 +685,13 @@ async function handlePlay(interaction, query) {
       queues.set(interaction.guildId, queue);
     }
 
-    const queuedSong = await queue.addSong(songInfo, interaction.user);
+    const queuedSong = await queue.addSong(songInfo, interaction.user, playTop);
 
     if (queuedSong) {
-      return interaction.editReply(`📝 **Queued:** [${queuedSong.title}](${queuedSong.url}) [${queuedSong.duration}]`)
+      const messageText = playTop 
+        ? `📝 **Queued to top:** [${queuedSong.title}](${queuedSong.url}) [${queuedSong.duration}]`
+        : `📝 **Queued:** [${queuedSong.title}](${queuedSong.url}) [${queuedSong.duration}]`;
+      return interaction.editReply(messageText)
         .then(msg => {
           queue.sessionMessages.push(msg);
           setTimeout(() => {
