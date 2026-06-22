@@ -90,6 +90,14 @@ const commands = [
       option.setName('query')
         .setDescription('Song name or link')
         .setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('find')
+    .setDescription('Search for songs and pick one to play')
+    .addStringOption(option =>
+      option.setName('query')
+        .setDescription('Song name to search for')
+        .setRequired(true)
     )
 ].map(command => command.toJSON());
 
@@ -174,9 +182,14 @@ client.on('interactionCreate', async interaction => {
       await musicPlayer.handleMove(interaction);
     } else if (commandName === 'controls') {
       await musicPlayer.handleControls(interaction);
+    } else if (commandName === 'find') {
+      const query = interaction.options.getString('query');
+      await musicPlayer.handleFind(interaction, query);
     }
   } else if (interaction.isButton()) {
     await musicPlayer.handleButton(interaction);
+  } else if (interaction.isStringSelectMenu()) {
+    await musicPlayer.handleSelectMenu(interaction);
   }
 });
 

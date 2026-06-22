@@ -138,6 +138,9 @@ async function getSpotifyEmbedData(query) {
 // Global music queues map (key: guildId, value: GuildQueue)
 const queues = new Map();
 
+// Stores ephemeral search results per guild until user picks one
+const pendingSearchResults = new Map();
+
 class GuildQueue {
   constructor(guildId, textChannel, voiceChannel) {
     this.guildId = guildId;
@@ -557,6 +560,22 @@ async function handlePlay(interaction, query, playTop = false) {
 
   try {
     let songInfo = null;
+
+    // Normalize YouTube Music URLs (music.youtube.com) to regular YouTube URLs
+    // play-dl cannot parse the music.youtube.com internal JSON structure
+    try {
+      const urlObj = new URL(query);
+      if (urlObj.hostname === 'music.youtube.com') {
+        urlObj.hostname = 'www.youtube.com';
+        // Strip YTM-specific params that confuse play-dl
+        urlObj.searchParams.delete('playnext');
+        urlObj.searchParams.delete('si');
+        query = urlObj.toString();
+        console.log(`[play] Normalized YouTube Music URL to: ${query}`);
+      }
+    } catch (_) {
+      // Not a URL — leave query as-is (plain search string)
+    }
 
     // Validate the query type (YT video, playlist, soundcloud, spotify, etc.)
     const validationType = await play.validate(query);
@@ -1109,6 +1128,109 @@ async function handleButton(interaction) {
   }
 }
 
+/**
+ * /find  – search YouTube for up to 5 results, show a Select Menu to pick one.
+ */
+async function handleFind(interaction, query) {
+  await interaction.deferReply();
+
+  try {
+    const results = await play.search(query, { limit: 5, source: { youtube: 'video' } });
+
+    if (!results || results.length === 0) {
+      return interaction.editReply(`❌ No results found for: \`${query}\``);
+    }
+
+    const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
+
+    // Store results so the select-menu handler can look them up
+    pendingSearchResults.set(interaction.guildId, {
+      results: results.map(v => ({
+        title: v.title,
+        url: v.url,
+        duration: v.durationRaw
+      })),
+      requestedBy: interaction.user
+    });
+
+    // Auto-expire after 60 seconds
+    setTimeout(() => pendingSearchResults.delete(interaction.guildId), 60000);
+
+    const embed = new EmbedBuilder()
+      .setColor('#5865F2')
+      .setTitle(`🔍 Search results for: ${query}`)
+      .setDescription(
+        results
+          .map((v, i) => `**${i + 1}.** [${v.title}](${v.url}) \`${v.durationRaw}\``)
+          .join('\n')
+      )
+      .setFooter({ text: 'Select a song from the dropdown below • expires in 60s' })
+      .setTimestamp();
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId('find_select')
+      .setPlaceholder('Pick a song to play...')
+      .addOptions(
+        results.map((v, i) => ({
+          label: v.title.length > 100 ? v.title.slice(0, 97) + '...' : v.title,
+          description: `Duration: ${v.durationRaw}`,
+          value: String(i)
+        }))
+      );
+
+    const row = new ActionRowBuilder().addComponents(selectMenu);
+
+    return interaction.editReply({ embeds: [embed], components: [row] });
+  } catch (error) {
+    console.error('[find-error]', error);
+    return interaction.editReply(`⚠️ An error occurred while searching: ${error.message}`);
+  }
+}
+
+/**
+ * Handles the select-menu interaction created by /find.
+ */
+async function handleSelectMenu(interaction) {
+  if (interaction.customId !== 'find_select') return;
+
+  const pending = pendingSearchResults.get(interaction.guildId);
+  if (!pending) {
+    return interaction.reply({ content: '⏰ This search has expired. Run `/find` again.', flags: MessageFlags.Ephemeral });
+  }
+
+  const index = parseInt(interaction.values[0], 10);
+  const song = pending.results[index];
+  if (!song) {
+    return interaction.reply({ content: '❌ Invalid selection.', flags: MessageFlags.Ephemeral });
+  }
+
+  // Remove the dropdown now that a choice was made
+  pendingSearchResults.delete(interaction.guildId);
+  await interaction.message.edit({ components: [] }).catch(() => {});
+
+  // Ensure the user is in a voice channel
+  const voiceChannel = interaction.member.voice.channel;
+  if (!voiceChannel) {
+    return interaction.reply({ content: '❌ You need to join a voice channel first!', flags: MessageFlags.Ephemeral });
+  }
+
+  const permissions = voiceChannel.permissionsFor(interaction.client.user);
+  if (!permissions.has('Connect') || !permissions.has('Speak')) {
+    return interaction.reply({ content: '❌ I do not have permission to join or speak in your voice channel!', flags: MessageFlags.Ephemeral });
+  }
+
+  await interaction.reply({ content: `🎵 Added **${song.title}** to the queue!`, fetchReply: true })
+    .then(msg => setTimeout(() => msg.delete().catch(() => {}), 8000));
+
+  let queue = queues.get(interaction.guildId);
+  if (!queue) {
+    queue = new GuildQueue(interaction.guildId, interaction.channel, voiceChannel);
+    queues.set(interaction.guildId, queue);
+  }
+
+  await queue.addSong(song, interaction.user);
+}
+
 function handleVoiceStateUpdate(oldState, newState) {
   const guildId = oldState.guild.id || newState.guild.id;
   const queue = queues.get(guildId);
@@ -1164,6 +1286,8 @@ function handleVoiceStateUpdate(oldState, newState) {
 
 module.exports = {
   handlePlay,
+  handleFind,
+  handleSelectMenu,
   handleSkip,
   handleStop,
   handlePause,
