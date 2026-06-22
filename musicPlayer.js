@@ -1225,12 +1225,14 @@ async function handleFind(interaction, query) {
           .map((v, i) => `**${i + 1}.** [${v.title}](${v.url}) \`${v.durationRaw}\``)
           .join('\n')
       )
-      .setFooter({ text: 'Select a song from the dropdown below • expires in 60s' })
+      .setFooter({ text: 'Select one or more songs from the dropdown below • expires in 60s' })
       .setTimestamp();
 
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId('find_select')
-      .setPlaceholder('Pick a song to play...')
+      .setPlaceholder('Pick songs to queue...')
+      .setMinValues(1)
+      .setMaxValues(results.length)
       .addOptions(
         results.map((v, i) => ({
           label: v.title.length > 100 ? v.title.slice(0, 97) + '...' : v.title,
@@ -1266,9 +1268,12 @@ async function handleSelectMenu(interaction) {
     return interaction.reply({ content: '❌ This search belongs to someone else!', flags: MessageFlags.Ephemeral });
   }
 
-  const index = parseInt(interaction.values[0], 10);
-  const song = pending.results[index];
-  if (!song) {
+  // Resolve all selected indices to song objects
+  const selectedSongs = interaction.values
+    .map(v => pending.results[parseInt(v, 10)])
+    .filter(Boolean);
+
+  if (selectedSongs.length === 0) {
     return interaction.reply({ content: '❌ Invalid selection.', flags: MessageFlags.Ephemeral });
   }
 
@@ -1286,28 +1291,34 @@ async function handleSelectMenu(interaction) {
     return interaction.reply({ content: '❌ I do not have permission to join or speak in your voice channel!', flags: MessageFlags.Ephemeral });
   }
 
-  // deferUpdate() acknowledges the component interaction without modifying the message.
-  // This works correctly for BOTH ephemeral and non-ephemeral parent messages.
+  // deferUpdate() acknowledges the component interaction correctly for both ephemeral and non-ephemeral messages.
   await interaction.deferUpdate();
 
-  // Collapse the dropdown (works for non-ephemeral; silently no-ops for ephemeral via editReply)
+  // Collapse the dropdown
   await interaction.editReply({ components: [] }).catch(() => {});
 
-  // Send the confirmation as a follow-up (visible only to the user since it's ephemeral)
-  const confirmMsg = await interaction.followUp({
-    content: `🎵 Added **${song.title}** to the queue!`,
-    flags: MessageFlags.Ephemeral
-  }).catch(() => null);
-
-  if (confirmMsg) setTimeout(() => confirmMsg.delete().catch(() => {}), 8000);
-
+  // Set up the queue
   let queue = queues.get(interaction.guildId);
   if (!queue) {
     queue = new GuildQueue(interaction.guildId, interaction.channel, voiceChannel);
     queues.set(interaction.guildId, queue);
   }
 
-  await queue.addSong(song, interaction.user);
+  // Add all selected songs
+  for (const song of selectedSongs) {
+    await queue.addSong(song, interaction.user);
+  }
+
+  // Confirmation follow-up
+  const addedList = selectedSongs.map(s => `• **${s.title}**`).join('\n');
+  const confirmMsg = await interaction.followUp({
+    content: selectedSongs.length === 1
+      ? `🎵 Added **${selectedSongs[0].title}** to the queue!`
+      : `🎵 Added **${selectedSongs.length}** songs to the queue:\n${addedList}`,
+    flags: MessageFlags.Ephemeral
+  }).catch(() => null);
+
+  if (confirmMsg) setTimeout(() => confirmMsg.delete().catch(() => {}), 10000);
 }
 
 function handleVoiceStateUpdate(oldState, newState) {
