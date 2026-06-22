@@ -8,6 +8,8 @@ A clean, modern, and performant Discord Music Bot utilizing **discord.js v14**, 
 - 🧼 **Clean Chat Mode**: Automatically deletes command feedback and bot messages upon playback completion or disconnection to keep channels clutter-free.
 - ⏱️ **Auto-Leave Guard**: Automatically disconnects from the voice channel when it has been empty for more than 15 seconds.
 - ⚡ **Ultra-low Latency Audio Pipeline**: Leverages native **Ogg Opus** encoding within `ffmpeg` (`-c:a libopus -f opus`) to ensure high-fidelity, stutter-free playback without speed fluctuations.
+- 🔍 **Interactive Song Search**: Use `/find` to search YouTube and select one or more songs to queue via a user-scoped, interactive dropdown select menu.
+- 🗂️ **Instant Playlist Loading**: Supports YouTube playlists, mixes, and radios. Automatically begins playing the first song instantly while resolving and loading the rest in the background.
 - 🔒 **DAVE Protocol Ready**: Preconfigured with `@snazzah/davey` to support Discord's E2E voice encryption protocols.
 
 ## Prerequisites
@@ -60,6 +62,8 @@ bun start
 ## Slash Commands
 
 - `/play <query>` (or `/suna`) - Play a song (from URL or search terms).
+- `/playtop <query>` (or `/pehle`) - Add a song/playlist to the top of the queue.
+- `/find <query>` - Search YouTube for up to 5 matches and select one or more tracks using a dropdown select menu.
 - `/pause` (or `/chup`) - Pause music.
 - `/resume` (or `/bhok`) - Resume music.
 - `/leave` (or `/nikal`) - Leave voice channel and clear queue.
@@ -67,6 +71,8 @@ bun start
 - `/stop` - Stop music, clear queue, and leave.
 - `/queue` - Show current queue.
 - `/join` - Join your current voice channel.
+- `/move` - Move the bot to your current voice channel.
+- `/controls` - Show interactive buttons to control playback in the channel.
 
 ## Deploying to Railway
 
