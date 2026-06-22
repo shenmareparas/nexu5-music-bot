@@ -589,13 +589,24 @@ async function handlePlay(interaction, query, playTop = false) {
           return interaction.editReply(`✅ Loaded playlist **${playlist.title}** with **${videos.length}** songs to the ${playTop ? 'top of the ' : ''}queue!`);
         } catch (playlistError) {
           console.warn('[playlist-loader] Failed to load playlist, falling back to single video:', playlistError.message);
+          if (playlistError.message && playlistError.message.includes('429')) {
+            return interaction.editReply('❌ YouTube is currently rate-limiting requests (Got 429). Please try again later.');
+          }
           if (validationType === 'yt_video') {
-            const videoInfo = await play.video_info(query);
-            songInfo = {
-              title: videoInfo.video_details.title,
-              url: videoInfo.video_details.url,
-              duration: videoInfo.video_details.durationRaw
-            };
+            try {
+              const videoInfo = await play.video_info(query);
+              songInfo = {
+                title: videoInfo.video_details.title,
+                url: videoInfo.video_details.url,
+                duration: videoInfo.video_details.durationRaw
+              };
+            } catch (videoError) {
+              console.error('[playlist-loader] Fallback to single video also failed:', videoError.message);
+              if (videoError.message && videoError.message.includes('429')) {
+                return interaction.editReply('❌ YouTube is currently rate-limiting requests (Got 429). Please try again later.');
+              }
+              return interaction.editReply(`❌ Failed to retrieve video information: ${videoError.message}`);
+            }
           } else {
             return interaction.editReply(`❌ Failed to retrieve playlist information: ${playlistError.message}`);
           }
@@ -715,7 +726,10 @@ async function handlePlay(interaction, query, playTop = false) {
     }
   } catch (error) {
     console.error(error);
-    return interaction.editReply(`⚠️ An error occurred while trying to play: ${error.message}`)
+    const msgText = (error.message && error.message.includes('429'))
+      ? '❌ YouTube is currently rate-limiting requests (Got 429). Please try again later.'
+      : `⚠️ An error occurred while trying to play: ${error.message}`;
+    return interaction.editReply(msgText)
       .then(msg => {
         const queue = queues.get(interaction.guildId);
         if (queue) {
