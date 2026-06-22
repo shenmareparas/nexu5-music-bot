@@ -1,0 +1,29 @@
+{
+  "name": "nexu5-music-bot",
+  "version": "1.0.0",
+  "description": "NEXU5 Music - A modern and performant Discord Music Bot using discord.js and play-dl",
+  "main": "index.js",
+  "scripts": {
+    "start": "bun index.js"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "music",
+    "play-dl",
+    "discord.js",
+    "voice"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "@distube/ytdl-core": "^4.16.10",
+    "@snazzah/davey": "^0.1.11",
+    "discord.js": "^14.15.3",
+    "dotenv": "^16.4.5",
+    "ffmpeg-static": "^5.2.0",
+    "libsodium-wrappers": "^0.7.13",
+    "play-dl": "^1.9.7"
+  }
+}
