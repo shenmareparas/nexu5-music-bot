@@ -704,16 +704,111 @@ async function handlePlay(interaction, query, playTop = false) {
         return interaction.followUp(`✅ Loaded **${loadedCount}** tracks from Spotify list to the ${playTop ? 'top of the ' : ''}queue!`);
       }
     } else {
-      // Attempt generic search as fallback
-      const searchResults = await play.search(query, { limit: 1 });
-      if (searchResults.length === 0) {
-        return interaction.editReply(`❌ Unsupported URL or no search results for: \`${query}\``);
+      // Check if this is a YouTube URL with a playlist parameter that play.validate() didn't recognise
+      // (e.g. YouTube Mix / Radio playlists: LRYR…, RDLR…, RD…, etc.)
+      let isYtPlaylistUrl = false;
+      try {
+        const u = new URL(query);
+        isYtPlaylistUrl =
+          (u.hostname === 'www.youtube.com' || u.hostname === 'youtube.com' || u.hostname === 'youtu.be') &&
+          u.searchParams.has('list');
+      } catch (_) {}
+
+      if (isYtPlaylistUrl) {
+        // ── First attempt: play-dl playlist_info ──────────────────────────────
+        let loadedViaPlayDl = false;
+        try {
+          console.log(`[playlist-loader] Unrecognised YT playlist URL – trying play.playlist_info(): ${query}`);
+          const playlist = await play.playlist_info(query, { incomplete: true });
+          const videos = await playlist.all_videos();
+          if (videos.length === 0) throw new Error('No videos returned by play-dl');
+
+          let queue = queues.get(interaction.guildId);
+          if (!queue) {
+            queue = new GuildQueue(interaction.guildId, interaction.channel, voiceChannel);
+            queues.set(interaction.guildId, queue);
+          }
+          let insertIndex = 1;
+          for (const video of videos) {
+            await queue.addSong({
+              title: video.title,
+              url: video.url,
+              duration: video.durationRaw
+            }, interaction.user, playTop, insertIndex++);
+          }
+          loadedViaPlayDl = true;
+          return interaction.editReply(`✅ Loaded playlist **${playlist.title || 'YouTube Mix'}** with **${videos.length}** songs to the ${playTop ? 'top of the ' : ''}queue!`);
+        } catch (pdErr) {
+          console.warn(`[playlist-loader] play-dl failed for Mix playlist (${pdErr.message}), trying yt-dlp flat-playlist...`);
+        }
+
+        if (!loadedViaPlayDl) {
+          // ── Fallback: yt-dlp --flat-playlist ────────────────────────────────
+          try {
+            const ytDlpPath = YTDLP_PATH;
+            const ytDlpArgs = [
+              '--flat-playlist',
+              '--print', '%(id)s\t%(title)s\t%(duration_string)s',
+              '--no-warnings',
+              '--no-playlist-reverse',
+              query
+            ];
+            const cookiesPath = path.join(__dirname, 'cookies.txt');
+            if (fs.existsSync(cookiesPath)) ytDlpArgs.unshift('--cookies', cookiesPath);
+
+            const output = await new Promise((resolve, reject) => {
+              const proc = spawn(ytDlpPath, ytDlpArgs);
+              let stdout = '';
+              let stderr = '';
+              proc.stdout.on('data', d => { stdout += d.toString(); });
+              proc.stderr.on('data', d => { stderr += d.toString(); });
+              proc.on('close', code => {
+                if (code !== 0 && stdout.trim() === '') reject(new Error(stderr.trim() || `yt-dlp exited ${code}`));
+                else resolve(stdout);
+              });
+              proc.on('error', reject);
+            });
+
+            const entries = output.trim().split('\n').filter(Boolean).map(line => {
+              const [id, title, duration] = line.split('\t');
+              return { id, title: title || 'Unknown', duration: duration || '?' };
+            }).filter(e => e.id);
+
+            if (entries.length === 0) {
+              return interaction.editReply('❌ Could not retrieve any tracks from that YouTube Mix playlist.');
+            }
+
+            let queue = queues.get(interaction.guildId);
+            if (!queue) {
+              queue = new GuildQueue(interaction.guildId, interaction.channel, voiceChannel);
+              queues.set(interaction.guildId, queue);
+            }
+            let insertIndex = 1;
+            for (const entry of entries) {
+              await queue.addSong({
+                title: entry.title,
+                url: `https://www.youtube.com/watch?v=${entry.id}`,
+                duration: entry.duration
+              }, interaction.user, playTop, insertIndex++);
+            }
+            return interaction.editReply(`✅ Loaded **${entries.length}** songs from YouTube Mix to the ${playTop ? 'top of the ' : ''}queue!`);
+          } catch (ytErr) {
+            console.error('[playlist-loader] yt-dlp flat-playlist also failed:', ytErr.message);
+            return interaction.editReply(`❌ Failed to load YouTube Mix playlist: ${ytErr.message}`);
+          }
+        }
+      } else {
+        // Plain text search fallback
+        const searchResults = await play.search(query, { limit: 1 });
+        if (searchResults.length === 0) {
+          return interaction.editReply(`❌ Unsupported URL or no search results for: \`${query}\``);
+        }
+        songInfo = {
+          title: searchResults[0].title,
+          url: searchResults[0].url,
+          duration: searchResults[0].durationRaw
+        };
       }
-      songInfo = {
-        title: searchResults[0].title,
-        url: searchResults[0].url,
-        duration: searchResults[0].durationRaw
-      };
     }
 
     if (!songInfo) {
@@ -1132,7 +1227,8 @@ async function handleButton(interaction) {
  * /find  – search YouTube for up to 5 results, show a Select Menu to pick one.
  */
 async function handleFind(interaction, query) {
-  await interaction.deferReply();
+  // Defer as ephemeral so only the invoking user sees the search results
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
     const results = await play.search(query, { limit: 5, source: { youtube: 'video' } });
@@ -1143,8 +1239,8 @@ async function handleFind(interaction, query) {
 
     const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
 
-    // Store results so the select-menu handler can look them up
-    pendingSearchResults.set(interaction.guildId, {
+    // Key by userId so multiple users can search simultaneously in the same guild
+    pendingSearchResults.set(interaction.user.id, {
       results: results.map(v => ({
         title: v.title,
         url: v.url,
@@ -1154,7 +1250,7 @@ async function handleFind(interaction, query) {
     });
 
     // Auto-expire after 60 seconds
-    setTimeout(() => pendingSearchResults.delete(interaction.guildId), 60000);
+    setTimeout(() => pendingSearchResults.delete(interaction.user.id), 60000);
 
     const embed = new EmbedBuilder()
       .setColor('#5865F2')
@@ -1193,7 +1289,8 @@ async function handleFind(interaction, query) {
 async function handleSelectMenu(interaction) {
   if (interaction.customId !== 'find_select') return;
 
-  const pending = pendingSearchResults.get(interaction.guildId);
+  // Look up by the interacting user's ID (matches how handleFind stored it)
+  const pending = pendingSearchResults.get(interaction.user.id);
   if (!pending) {
     return interaction.reply({ content: '⏰ This search has expired. Run `/find` again.', flags: MessageFlags.Ephemeral });
   }
@@ -1204,8 +1301,8 @@ async function handleSelectMenu(interaction) {
     return interaction.reply({ content: '❌ Invalid selection.', flags: MessageFlags.Ephemeral });
   }
 
-  // Remove the dropdown now that a choice was made
-  pendingSearchResults.delete(interaction.guildId);
+  // Remove the pending entry and collapse the dropdown
+  pendingSearchResults.delete(interaction.user.id);
   await interaction.message.edit({ components: [] }).catch(() => {});
 
   // Ensure the user is in a voice channel
@@ -1219,8 +1316,12 @@ async function handleSelectMenu(interaction) {
     return interaction.reply({ content: '❌ I do not have permission to join or speak in your voice channel!', flags: MessageFlags.Ephemeral });
   }
 
-  await interaction.reply({ content: `🎵 Added **${song.title}** to the queue!`, fetchReply: true })
-    .then(msg => setTimeout(() => msg.delete().catch(() => {}), 8000));
+  // Use withResponse instead of deprecated fetchReply to get the message object
+  const { response: msg } = await interaction.reply({
+    content: `🎵 Added **${song.title}** to the queue!`,
+    withResponse: true
+  });
+  if (msg) setTimeout(() => msg.delete().catch(() => {}), 8000);
 
   let queue = queues.get(interaction.guildId);
   if (!queue) {
