@@ -543,6 +543,100 @@ function isBotDetectionError(error) {
 }
 
 /**
+ * Load a YouTube playlist (any type: regular, Mix, Radio) via yt-dlp --flat-playlist.
+ * - Adds the FIRST song to the queue immediately so playback starts right away.
+ * - Loads all remaining songs asynchronously in the background.
+ * - Replies to the Discord interaction as soon as the first song is queued.
+ */
+async function loadYtPlaylist(interaction, query, voiceChannel, playTop = false) {
+  console.log(`[playlist-loader] Loading YT playlist via yt-dlp --flat-playlist: ${query}`);
+
+  // Run yt-dlp to enumerate all entries (no downloading, very fast)
+  let entries;
+  try {
+    const ytDlpArgs = [
+      '--flat-playlist',
+      '--print', '%(id)s\t%(title)s\t%(duration_string)s',
+      '--no-warnings',
+      query
+    ];
+    const cookiesPath = path.join(__dirname, 'cookies.txt');
+    if (fs.existsSync(cookiesPath)) ytDlpArgs.unshift('--cookies', cookiesPath);
+
+    const output = await new Promise((resolve, reject) => {
+      const proc = spawn(YTDLP_PATH, ytDlpArgs);
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', d => { stdout += d.toString(); });
+      proc.stderr.on('data', d => {
+        const line = d.toString();
+        // Filter bun deprecation noise
+        if (!line.includes('bun support has been deprecated')) stderr += line;
+      });
+      proc.on('close', code => {
+        if (code !== 0 && stdout.trim() === '') reject(new Error(stderr.trim() || `yt-dlp exited ${code}`));
+        else resolve(stdout);
+      });
+      proc.on('error', reject);
+    });
+
+    entries = output.trim().split('\n').filter(Boolean).map(line => {
+      const [id, title, duration] = line.split('\t');
+      return {
+        title: title && title !== 'NA' ? title : 'Unknown',
+        url: `https://www.youtube.com/watch?v=${id}`,
+        duration: duration && duration !== 'NA' ? duration : '?'
+      };
+    }).filter(e => e.url.includes('watch?v='));
+  } catch (err) {
+    console.error('[playlist-loader] yt-dlp flat-playlist failed:', err.message);
+    return interaction.editReply(`❌ Failed to load playlist: ${err.message}`);
+  }
+
+  if (entries.length === 0) {
+    return interaction.editReply('❌ No playable tracks found in that playlist.');
+  }
+
+  // Set up the queue
+  let queue = queues.get(interaction.guildId);
+  if (!queue) {
+    queue = new GuildQueue(interaction.guildId, interaction.channel, voiceChannel);
+    queues.set(interaction.guildId, queue);
+  }
+
+  // Add the first song synchronously so playback starts immediately
+  const firstInsertIndex = playTop ? 1 : undefined;
+  await queue.addSong(entries[0], interaction.user, playTop, firstInsertIndex);
+
+  // Reply immediately so Discord doesn't time out
+  await interaction.editReply(
+    `▶️ Now queuing **${entries.length}** songs — starting with **${entries[0].title}**...\n` +
+    `_(remaining tracks loading in background)_`
+  );
+
+  // Load the rest asynchronously — don't await, fire and forget
+  (async () => {
+    let insertIndex = playTop ? 2 : undefined;
+    for (let i = 1; i < entries.length; i++) {
+      // If the queue was destroyed (user ran /stop), stop loading
+      if (!queues.has(interaction.guildId)) {
+        console.log(`[playlist-loader] Queue was destroyed mid-load, stopping at ${i}/${entries.length}`);
+        break;
+      }
+      await queue.addSong(entries[i], interaction.user, playTop, insertIndex);
+      if (playTop && insertIndex !== undefined) insertIndex++;
+    }
+    console.log(`[playlist-loader] Finished loading ${entries.length} tracks into queue.`);
+    // Send a follow-up once all songs are loaded
+    interaction.followUp({
+      content: `✅ Fully loaded **${entries.length}** songs into the ${playTop ? 'top of the ' : ''}queue!`,
+    }).catch(() => {});
+  })();
+
+  return;
+}
+
+/**
  * Main module interfaces
  */
 async function handlePlay(interaction, query, playTop = false) {
@@ -592,55 +686,7 @@ async function handlePlay(interaction, query, playTop = false) {
           duration: searchResults[0].durationRaw
         };
       } else if (validationType === 'yt_playlist' || (validationType === 'yt_video' && query.includes('list='))) {
-        // Grab playlist info and play all videos
-        try {
-          console.log(`[playlist-loader] Attempting to load playlist from query: ${query}`);
-          const playlist = await play.playlist_info(query);
-          const videos = await playlist.all_videos();
-          if (videos.length === 0) {
-            throw new Error('No videos found in that playlist!');
-          }
-
-          let queue = queues.get(interaction.guildId);
-          if (!queue) {
-            queue = new GuildQueue(interaction.guildId, interaction.channel, voiceChannel);
-            queues.set(interaction.guildId, queue);
-          }
-
-          let insertIndex = 1;
-          for (const video of videos) {
-            await queue.addSong({
-              title: video.title,
-              url: video.url,
-              duration: video.durationRaw
-            }, interaction.user, playTop, insertIndex++);
-          }
-
-          return interaction.editReply(`✅ Loaded playlist **${playlist.title}** with **${videos.length}** songs to the ${playTop ? 'top of the ' : ''}queue!`);
-        } catch (playlistError) {
-          console.warn('[playlist-loader] Failed to load playlist, falling back to single video:', playlistError.message);
-          if (isBotDetectionError(playlistError)) {
-            return interaction.editReply('❌ YouTube is currently blocking our requests (bot verification / rate limit). Please try another video link or search query.');
-          }
-          if (validationType === 'yt_video') {
-            try {
-              const videoInfo = await play.video_info(query);
-              songInfo = {
-                title: videoInfo.video_details.title,
-                url: videoInfo.video_details.url,
-                duration: videoInfo.video_details.durationRaw
-              };
-            } catch (videoError) {
-              console.error('[playlist-loader] Fallback to single video also failed:', videoError.message);
-              if (isBotDetectionError(videoError)) {
-                return interaction.editReply('❌ YouTube is currently blocking our requests (bot verification / rate limit). Please try another video link or search query.');
-              }
-              return interaction.editReply(`❌ Failed to retrieve video information: ${videoError.message}`);
-            }
-          } else {
-            return interaction.editReply(`❌ Failed to retrieve playlist information: ${playlistError.message}`);
-          }
-        }
+        return await loadYtPlaylist(interaction, query, voiceChannel, playTop);
       } else if (validationType === 'yt_video') {
         const videoInfo = await play.video_info(query);
         songInfo = {
@@ -715,88 +761,7 @@ async function handlePlay(interaction, query, playTop = false) {
       } catch (_) {}
 
       if (isYtPlaylistUrl) {
-        // ── First attempt: play-dl playlist_info ──────────────────────────────
-        let loadedViaPlayDl = false;
-        try {
-          console.log(`[playlist-loader] Unrecognised YT playlist URL – trying play.playlist_info(): ${query}`);
-          const playlist = await play.playlist_info(query, { incomplete: true });
-          const videos = await playlist.all_videos();
-          if (videos.length === 0) throw new Error('No videos returned by play-dl');
-
-          let queue = queues.get(interaction.guildId);
-          if (!queue) {
-            queue = new GuildQueue(interaction.guildId, interaction.channel, voiceChannel);
-            queues.set(interaction.guildId, queue);
-          }
-          let insertIndex = 1;
-          for (const video of videos) {
-            await queue.addSong({
-              title: video.title,
-              url: video.url,
-              duration: video.durationRaw
-            }, interaction.user, playTop, insertIndex++);
-          }
-          loadedViaPlayDl = true;
-          return interaction.editReply(`✅ Loaded playlist **${playlist.title || 'YouTube Mix'}** with **${videos.length}** songs to the ${playTop ? 'top of the ' : ''}queue!`);
-        } catch (pdErr) {
-          console.warn(`[playlist-loader] play-dl failed for Mix playlist (${pdErr.message}), trying yt-dlp flat-playlist...`);
-        }
-
-        if (!loadedViaPlayDl) {
-          // ── Fallback: yt-dlp --flat-playlist ────────────────────────────────
-          try {
-            const ytDlpPath = YTDLP_PATH;
-            const ytDlpArgs = [
-              '--flat-playlist',
-              '--print', '%(id)s\t%(title)s\t%(duration_string)s',
-              '--no-warnings',
-              '--no-playlist-reverse',
-              query
-            ];
-            const cookiesPath = path.join(__dirname, 'cookies.txt');
-            if (fs.existsSync(cookiesPath)) ytDlpArgs.unshift('--cookies', cookiesPath);
-
-            const output = await new Promise((resolve, reject) => {
-              const proc = spawn(ytDlpPath, ytDlpArgs);
-              let stdout = '';
-              let stderr = '';
-              proc.stdout.on('data', d => { stdout += d.toString(); });
-              proc.stderr.on('data', d => { stderr += d.toString(); });
-              proc.on('close', code => {
-                if (code !== 0 && stdout.trim() === '') reject(new Error(stderr.trim() || `yt-dlp exited ${code}`));
-                else resolve(stdout);
-              });
-              proc.on('error', reject);
-            });
-
-            const entries = output.trim().split('\n').filter(Boolean).map(line => {
-              const [id, title, duration] = line.split('\t');
-              return { id, title: title || 'Unknown', duration: duration || '?' };
-            }).filter(e => e.id);
-
-            if (entries.length === 0) {
-              return interaction.editReply('❌ Could not retrieve any tracks from that YouTube Mix playlist.');
-            }
-
-            let queue = queues.get(interaction.guildId);
-            if (!queue) {
-              queue = new GuildQueue(interaction.guildId, interaction.channel, voiceChannel);
-              queues.set(interaction.guildId, queue);
-            }
-            let insertIndex = 1;
-            for (const entry of entries) {
-              await queue.addSong({
-                title: entry.title,
-                url: `https://www.youtube.com/watch?v=${entry.id}`,
-                duration: entry.duration
-              }, interaction.user, playTop, insertIndex++);
-            }
-            return interaction.editReply(`✅ Loaded **${entries.length}** songs from YouTube Mix to the ${playTop ? 'top of the ' : ''}queue!`);
-          } catch (ytErr) {
-            console.error('[playlist-loader] yt-dlp flat-playlist also failed:', ytErr.message);
-            return interaction.editReply(`❌ Failed to load YouTube Mix playlist: ${ytErr.message}`);
-          }
-        }
+        return await loadYtPlaylist(interaction, query, voiceChannel, playTop);
       } else {
         // Plain text search fallback
         const searchResults = await play.search(query, { limit: 1 });
@@ -1292,7 +1257,13 @@ async function handleSelectMenu(interaction) {
   // Look up by the interacting user's ID (matches how handleFind stored it)
   const pending = pendingSearchResults.get(interaction.user.id);
   if (!pending) {
+    // Acknowledge the interaction before replying to avoid "interaction failed"
     return interaction.reply({ content: '⏰ This search has expired. Run `/find` again.', flags: MessageFlags.Ephemeral });
+  }
+
+  // Guard: only the user who ran /find can use their own dropdown
+  if (pending.requestedBy.id !== interaction.user.id) {
+    return interaction.reply({ content: '❌ This search belongs to someone else!', flags: MessageFlags.Ephemeral });
   }
 
   const index = parseInt(interaction.values[0], 10);
@@ -1301,11 +1272,10 @@ async function handleSelectMenu(interaction) {
     return interaction.reply({ content: '❌ Invalid selection.', flags: MessageFlags.Ephemeral });
   }
 
-  // Remove the pending entry and collapse the dropdown
+  // Remove the pending entry now that a choice was made
   pendingSearchResults.delete(interaction.user.id);
-  await interaction.message.edit({ components: [] }).catch(() => {});
 
-  // Ensure the user is in a voice channel
+  // Ensure the user is in a voice channel before acknowledging
   const voiceChannel = interaction.member.voice.channel;
   if (!voiceChannel) {
     return interaction.reply({ content: '❌ You need to join a voice channel first!', flags: MessageFlags.Ephemeral });
@@ -1316,12 +1286,20 @@ async function handleSelectMenu(interaction) {
     return interaction.reply({ content: '❌ I do not have permission to join or speak in your voice channel!', flags: MessageFlags.Ephemeral });
   }
 
-  // Use withResponse instead of deprecated fetchReply to get the message object
-  const { response: msg } = await interaction.reply({
+  // deferUpdate() acknowledges the component interaction without modifying the message.
+  // This works correctly for BOTH ephemeral and non-ephemeral parent messages.
+  await interaction.deferUpdate();
+
+  // Collapse the dropdown (works for non-ephemeral; silently no-ops for ephemeral via editReply)
+  await interaction.editReply({ components: [] }).catch(() => {});
+
+  // Send the confirmation as a follow-up (visible only to the user since it's ephemeral)
+  const confirmMsg = await interaction.followUp({
     content: `🎵 Added **${song.title}** to the queue!`,
-    withResponse: true
-  });
-  if (msg) setTimeout(() => msg.delete().catch(() => {}), 8000);
+    flags: MessageFlags.Ephemeral
+  }).catch(() => null);
+
+  if (confirmMsg) setTimeout(() => confirmMsg.delete().catch(() => {}), 8000);
 
   let queue = queues.get(interaction.guildId);
   if (!queue) {
