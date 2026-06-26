@@ -25,6 +25,17 @@ try {
 
 const fs = require('fs');
 const path = require('path');
+
+// Automatically extract cookies from environment variables if running in production/Railway
+const cookiesPath = path.join(__dirname, 'cookies.txt');
+if (process.env.YOUTUBE_COOKIES) {
+  try {
+    fs.writeFileSync(cookiesPath, process.env.YOUTUBE_COOKIES, 'utf8');
+    console.log('[cookies] Successfully wrote cookies.txt from YOUTUBE_COOKIES env variable.');
+  } catch (err) {
+    console.error('[cookies] Failed to write cookies.txt from environment variable:', err);
+  }
+}
 const { execSync } = require('child_process');
 
 let YTDLP_PATH = 'yt-dlp';
