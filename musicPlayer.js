@@ -972,7 +972,7 @@ function handleRemove(interaction) {
         return {
           label: `#${actualIndex}: ${displayTitle}`,
           description: `Requested by ${requestedByName} • ${song.duration}`,
-          value: `${actualIndex}:${song.url}`
+          value: `${actualIndex}|${song.url}`
         };
       })
     );
@@ -1304,7 +1304,7 @@ async function handleSelectMenu(interaction) {
 
     const toRemove = [];
     for (const val of interaction.values) {
-      const [indexStr, url] = val.split(':');
+      const [indexStr, url] = val.split('|');
       const index = parseInt(indexStr, 10);
       if (queue.songs[index] && queue.songs[index].url === url) {
         toRemove.push(index);
