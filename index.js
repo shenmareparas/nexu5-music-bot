@@ -98,7 +98,10 @@ const commands = [
       option.setName('query')
         .setDescription('Song name to search for')
         .setRequired(true)
-    )
+    ),
+  new SlashCommandBuilder()
+    .setName('remove')
+    .setDescription('Remove song(s) from the queue')
 ].map(command => command.toJSON());
 
 // Slash commands registration
@@ -185,6 +188,8 @@ client.on('interactionCreate', async interaction => {
     } else if (commandName === 'find') {
       const query = interaction.options.getString('query');
       await musicPlayer.handleFind(interaction, query);
+    } else if (commandName === 'remove') {
+      await musicPlayer.handleRemove(interaction);
     }
   } else if (interaction.isButton()) {
     await musicPlayer.handleButton(interaction);

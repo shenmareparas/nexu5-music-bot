@@ -438,6 +438,12 @@ class GuildQueue {
     }
   }
 
+  removeSong(index) {
+    if (index < 1 || index >= this.songs.length) return null;
+    const removed = this.songs.splice(index, 1);
+    return removed[0];
+  }
+
   skip() {
     if (this.songs.length === 0) return false;
     this.player.stop();
@@ -944,6 +950,42 @@ function handleQueue(interaction) {
     });
 }
 
+function handleRemove(interaction) {
+  const queue = queues.get(interaction.guildId);
+  if (!queue || queue.songs.length <= 1) {
+    return interaction.reply({ content: '❌ The queue is empty (or only has the currently playing song)!', flags: MessageFlags.Ephemeral });
+  }
+
+  const { ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
+
+  const upcomingSongs = queue.songs.slice(1, 26); // Select menus support max 25 options
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId('remove_select')
+    .setPlaceholder('Select song(s) to remove from the queue...')
+    .setMinValues(1)
+    .setMaxValues(upcomingSongs.length)
+    .addOptions(
+      upcomingSongs.map((song, i) => {
+        const actualIndex = i + 1;
+        const displayTitle = song.title.length > 80 ? song.title.slice(0, 77) + '...' : song.title;
+        const requestedByName = song.requestedBy?.username || song.requestedBy?.tag || String(song.requestedBy);
+        return {
+          label: `#${actualIndex}: ${displayTitle}`,
+          description: `Requested by ${requestedByName} • ${song.duration}`,
+          value: `${actualIndex}:${song.url}`
+        };
+      })
+    );
+
+  const row = new ActionRowBuilder().addComponents(selectMenu);
+
+  return interaction.reply({
+    content: '🗑️ Select the song(s) you want to remove:',
+    components: [row],
+    flags: MessageFlags.Ephemeral
+  });
+}
+
 async function handleJoin(interaction) {
   const voiceChannel = interaction.member.voice.channel;
   if (!voiceChannel) {
@@ -1254,6 +1296,41 @@ async function handleFind(interaction, query) {
  * Handles the select-menu interaction created by /find.
  */
 async function handleSelectMenu(interaction) {
+  if (interaction.customId === 'remove_select') {
+    const queue = queues.get(interaction.guildId);
+    if (!queue || queue.songs.length <= 1) {
+      return interaction.reply({ content: '❌ The queue is empty or has changed.', flags: MessageFlags.Ephemeral });
+    }
+
+    const toRemove = [];
+    for (const val of interaction.values) {
+      const [indexStr, url] = val.split(':');
+      const index = parseInt(indexStr, 10);
+      if (queue.songs[index] && queue.songs[index].url === url) {
+        toRemove.push(index);
+      }
+    }
+
+    if (toRemove.length === 0) {
+      return interaction.reply({ content: '❌ The selected songs are no longer in the queue at those positions.', flags: MessageFlags.Ephemeral });
+    }
+
+    // Sort descending to prevent index shift on splice
+    toRemove.sort((a, b) => b - a);
+
+    const removedSongs = [];
+    for (const index of toRemove) {
+      const [removed] = queue.songs.splice(index, 1);
+      removedSongs.push(removed);
+    }
+
+    const removedNames = removedSongs.map(s => `**${s.title}**`).reverse().join('\n');
+    return interaction.update({
+      content: `🗑️ Removed the following song(s) from the queue:\n${removedNames}`,
+      components: []
+    });
+  }
+
   if (interaction.customId !== 'find_select') return;
 
   // Look up by the interacting user's ID (matches how handleFind stored it)
@@ -1383,6 +1460,7 @@ module.exports = {
   handlePause,
   handleResume,
   handleQueue,
+  handleRemove,
   handleJoin,
   handleLeave,
   handleMove,
