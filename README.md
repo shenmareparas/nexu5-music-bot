@@ -76,7 +76,7 @@ bun start
 
 ## Deploying to Railway
 
-This bot is fully configured for deployment on [Railway](https://railway.app) using Nixpacks.
+This bot is fully configured for deployment on [Railway](https://railway.app) using the provided `Dockerfile`.
 
 ### Steps to Deploy
 
@@ -88,6 +88,11 @@ This bot is fully configured for deployment on [Railway](https://railway.app) us
    Go to the **Variables** tab of the service and add:
    - `DISCORD_TOKEN`: Your Discord Bot Token.
    - `CLIENT_ID`: Your Discord Bot Application/Client ID.
+   - `YOUTUBE_COOKIES`: (Optional but highly recommended) Your Netscape format cookies file content to authenticate YouTube requests.
 4. **Deploy**:
-   Railway will automatically detect the `nixpacks.toml` file, set up the Bun runtime environment, install system dependencies (`ffmpeg`, `yt-dlp`, and `python3`), and start the bot using the `bun start` command.
+   Railway will automatically build the container using the `Dockerfile`, install system dependencies (`ffmpeg` and `python3`), download/update `yt-dlp`, and start the bot using the `bun start` command.
+
+> [!NOTE]
+> The bot automatically passes `--extractor-args "youtube:player_skip=webpage,configs"` to `yt-dlp` to bypass the common HTTP 429 webpage blocks encountered on cloud platforms like Railway.
+
 

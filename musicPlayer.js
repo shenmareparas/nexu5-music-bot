@@ -363,6 +363,7 @@ class GuildQueue {
         '--remote-components', 'ejs:github',  // Download JS challenge solver from GitHub
         '--no-update',
         '--js-runtimes', `bun:${process.execPath}`,
+        '--extractor-args', 'youtube:player_skip=webpage,configs',
         '--no-playlist',
         '-f', 'bestaudio[ext=webm]/bestaudio/best',
         '-o', '-',                             // stream to stdout

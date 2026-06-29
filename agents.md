@@ -51,3 +51,10 @@ bun start
 - `DISCORD_TOKEN`: Discord Bot Token.
 - `CLIENT_ID`: Discord Client/Application ID.
 - `DEV_GUILD_ID`: (Optional) ID of a server to deploy slash commands to instantly during development.
+- `YOUTUBE_COOKIES`: (Optional) Netscape format cookies content for YouTube authentication to bypass restriction/age blocks.
+- `YTDLP_PATH`: (Optional) Override path to the `yt-dlp` executable.
+
+## Bypassing YouTube Rate Limits (HTTP 429 / 403)
+- When running in cloud hosting environments like Railway, YouTube may rate-limit the bot's IP with HTTP 429 when trying to scrape the initial video webpage.
+- To prevent this, `yt-dlp` is configured with `--extractor-args "youtube:player_skip=webpage,configs"`. This bypasses scraping the HTML webpage, directly requesting the stream configs via API clients using a local Bun JS runtime and remote component solver.
+
