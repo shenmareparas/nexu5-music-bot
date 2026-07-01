@@ -207,6 +207,10 @@ class GuildQueue {
       selfMute: false
     });
 
+    this.connection.on('error', error => {
+      console.error(`[connection] Voice connection error:`, error);
+    });
+
     this.connection.on('debug', message => {
       console.log(`[connection-debug] ${message}`);
     });
@@ -1080,15 +1084,7 @@ async function handleMove(interaction) {
   queue.voiceChannel = voiceChannel;
   queue.textChannel = interaction.channel; // Update text channel to the one where command was run
 
-  queue.connection = joinVoiceChannel({
-    channelId: voiceChannel.id,
-    guildId: queue.guildId,
-    adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-    selfDeaf: true,
-    selfMute: false
-  });
-
-  queue.connection.subscribe(queue.player);
+  await queue.connect();
 
   return interaction.reply({ content: `🚚 Moved to **${voiceChannel.name}**!`, fetchReply: true })
     .then(msg => {
