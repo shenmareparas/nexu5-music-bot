@@ -92,6 +92,15 @@ This bot is fully configured for deployment on [Railway](https://railway.app) us
 4. **Deploy**:
    Railway will automatically build the container using the `Dockerfile`, install system dependencies (`ffmpeg` and `python3`), download/update `yt-dlp`, and start the bot using the `bun start` command.
 
+> [!TIP]
+> **Preventing Cookie Expiration**:
+> Cookies expire quickly (often daily) because YouTube rotates tokens whenever you actively browse on the same profile. To get long-lasting cookies (stable for months):
+> 1. Open a new **Incognito/Private Window** in your browser.
+> 2. Log into YouTube.
+> 3. Export the cookies in Netscape format (using an extension like "Get cookies.txt LOCALLY").
+> 4. **Close the incognito window immediately** without logging out or browsing further. Do not use this specific session for casual browsing.
+> 5. Paste these cookies into your environment or `cookies.txt`.
+
 > [!NOTE]
 > The bot automatically passes `--extractor-args "youtube:player_skip=webpage,configs"` to `yt-dlp` to bypass the common HTTP 429 webpage blocks encountered on cloud platforms like Railway.
 

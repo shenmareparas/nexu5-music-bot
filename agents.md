@@ -57,4 +57,10 @@ bun start
 ## Bypassing YouTube Rate Limits (HTTP 429 / 403)
 - When running in cloud hosting environments like Railway, YouTube may rate-limit the bot's IP with HTTP 429 when trying to scrape the initial video webpage.
 - To prevent this, `yt-dlp` is configured with `--extractor-args "youtube:player_skip=webpage,configs"`. This bypasses scraping the HTML webpage, directly requesting the stream configs via API clients using a local Bun JS runtime and remote component solver.
+- **Preventing Cookie Expiration**: Since YouTube rotates token sessions when you actively browse the site on the same profile, cookies exported from your main profile expire almost daily. To fix this:
+  1. Open a new **Incognito/Private Window**.
+  2. Log into YouTube.
+  3. Export cookies using an extension (like "Get cookies.txt LOCALLY") and close the window immediately without browsing.
+  4. Use these cookies. They will remain valid for months as long as the incognito session is left untouched.
+
 
