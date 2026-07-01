@@ -7,6 +7,7 @@ WORKDIR /app
 
 # Copy dependency manifests
 COPY package.json bun.lock ./
+COPY patches/ ./patches/
 
 # Install dependencies
 RUN bun install --frozen-lockfile
