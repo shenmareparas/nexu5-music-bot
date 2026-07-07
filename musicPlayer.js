@@ -315,13 +315,18 @@ class GuildQueue {
     this.connection.on(VoiceConnectionStatus.Disconnected, async () => {
       console.log(`[connection] State: Disconnected`);
       try {
+        // Also race against Ready — the DAVE E2E handshake can briefly fire
+        // Disconnected before the connection settles into Ready, which would
+        // otherwise time out the race and incorrectly destroy the queue.
         await Promise.race([
           entersState(this.connection, VoiceConnectionStatus.Signalling, 5000),
           entersState(this.connection, VoiceConnectionStatus.Connecting, 5000),
+          entersState(this.connection, VoiceConnectionStatus.Ready, 5000),
         ]);
-        // Seems like a temporary reconnect
+        // Seems like a temporary reconnect or DAVE handshake blip — not a real disconnect
+        console.log(`[connection] Transient disconnect resolved, still connected.`);
       } catch (error) {
-        // Real disconnect
+        // Real disconnect — none of the target states were reached in 5s
         console.log(`[connection] Reconnect failed, destroying connection`);
         this.destroy();
       }
@@ -938,7 +943,7 @@ async function handlePlay(interaction, query, playTop = false) {
   }
 }
 
-function handleSkip(interaction) {
+async function handleSkip(interaction) {
   const queue = queues.get(interaction.guildId);
   if (!queue || queue.songs.length === 0) {
     return interaction.reply({ content: '❌ There is no music playing to skip!', flags: MessageFlags.Ephemeral });
@@ -946,34 +951,32 @@ function handleSkip(interaction) {
 
   const success = queue.skip();
   if (success) {
-    return interaction.reply({ content: '⏭️ Skipped the current song!', fetchReply: true })
-      .then(msg => {
-        queue.sessionMessages.push(msg);
-        setTimeout(() => {
-          if (queues.has(interaction.guildId) && queue.sessionMessages.includes(msg)) {
-            msg.delete().catch(() => {});
-            queue.sessionMessages = queue.sessionMessages.filter(m => m !== msg);
-          }
-        }, 5000);
-      });
+    const { resource: { message: skipMsg } } = await interaction.reply({ content: '⏭️ Skipped the current song!', withResponse: true });
+    queue.sessionMessages.push(skipMsg);
+    setTimeout(() => {
+      if (queues.has(interaction.guildId) && queue.sessionMessages.includes(skipMsg)) {
+        skipMsg.delete().catch(() => {});
+        queue.sessionMessages = queue.sessionMessages.filter(m => m !== skipMsg);
+      }
+    }, 5000);
   } else {
-    return interaction.reply({ content: '❌ No songs left in the queue to skip.', fetchReply: true })
-      .then(msg => setTimeout(() => msg.delete().catch(() => {}), 5000));
+    const { resource: { message: noSkipMsg } } = await interaction.reply({ content: '❌ No songs left in the queue to skip.', withResponse: true });
+    setTimeout(() => noSkipMsg.delete().catch(() => {}), 5000);
   }
 }
 
-function handleStop(interaction) {
+async function handleStop(interaction) {
   const queue = queues.get(interaction.guildId);
   if (!queue) {
     return interaction.reply({ content: '❌ I am not playing any music in this server!', flags: MessageFlags.Ephemeral });
   }
 
   queue.stop();
-  return interaction.reply({ content: '🛑 Stopped playing music and left the voice channel.', fetchReply: true })
-    .then(msg => setTimeout(() => msg.delete().catch(() => {}), 5000));
+  const { resource: { message: stopMsg } } = await interaction.reply({ content: '🛑 Stopped playing music and left the voice channel.', withResponse: true });
+  return setTimeout(() => stopMsg.delete().catch(() => {}), 5000);
 }
 
-function handlePause(interaction) {
+async function handlePause(interaction) {
   const queue = queues.get(interaction.guildId);
   if (!queue) {
     return interaction.reply({ content: '❌ I am not playing any music in this server!', flags: MessageFlags.Ephemeral });
@@ -981,22 +984,20 @@ function handlePause(interaction) {
 
   const paused = queue.pause();
   if (paused) {
-    return interaction.reply({ content: '⏸️ Paused the music.', fetchReply: true })
-      .then(msg => {
-        queue.sessionMessages.push(msg);
-        setTimeout(() => {
-          if (queues.has(interaction.guildId) && queue.sessionMessages.includes(msg)) {
-            msg.delete().catch(() => {});
-            queue.sessionMessages = queue.sessionMessages.filter(m => m !== msg);
-          }
-        }, 5000);
-      });
+    const { resource: { message: pauseMsg } } = await interaction.reply({ content: '⏸️ Paused the music.', withResponse: true });
+    queue.sessionMessages.push(pauseMsg);
+    setTimeout(() => {
+      if (queues.has(interaction.guildId) && queue.sessionMessages.includes(pauseMsg)) {
+        pauseMsg.delete().catch(() => {});
+        queue.sessionMessages = queue.sessionMessages.filter(m => m !== pauseMsg);
+      }
+    }, 5000);
   } else {
     return interaction.reply({ content: '❌ Music is already paused or not playing!', flags: MessageFlags.Ephemeral });
   }
 }
 
-function handleResume(interaction) {
+async function handleResume(interaction) {
   const queue = queues.get(interaction.guildId);
   if (!queue) {
     return interaction.reply({ content: '❌ I am not playing any music in this server!', flags: MessageFlags.Ephemeral });
@@ -1004,22 +1005,20 @@ function handleResume(interaction) {
 
   const resumed = queue.resume();
   if (resumed) {
-    return interaction.reply({ content: '▶️ Resumed the music.', fetchReply: true })
-      .then(msg => {
-        queue.sessionMessages.push(msg);
-        setTimeout(() => {
-          if (queues.has(interaction.guildId) && queue.sessionMessages.includes(msg)) {
-            msg.delete().catch(() => {});
-            queue.sessionMessages = queue.sessionMessages.filter(m => m !== msg);
-          }
-        }, 5000);
-      });
+    const { resource: { message: resumeMsg } } = await interaction.reply({ content: '▶️ Resumed the music.', withResponse: true });
+    queue.sessionMessages.push(resumeMsg);
+    setTimeout(() => {
+      if (queues.has(interaction.guildId) && queue.sessionMessages.includes(resumeMsg)) {
+        resumeMsg.delete().catch(() => {});
+        queue.sessionMessages = queue.sessionMessages.filter(m => m !== resumeMsg);
+      }
+    }, 5000);
   } else {
     return interaction.reply({ content: '❌ Music is already playing or not paused!', flags: MessageFlags.Ephemeral });
   }
 }
 
-function handleQueue(interaction) {
+async function handleQueue(interaction) {
   const queue = queues.get(interaction.guildId);
   if (!queue || queue.songs.length === 0) {
     return interaction.reply('📭 The queue is currently empty.');
@@ -1033,16 +1032,14 @@ function handleQueue(interaction) {
   const totalSongs = queue.songs.length;
   const queueMessage = `__**Current Queue:**__\n${songList}\n\n${totalSongs > 10 ? `*...and ${totalSongs - 10} more songs.*` : ''}`;
   
-  return interaction.reply({ content: queueMessage, fetchReply: true })
-    .then(msg => {
-      queue.sessionMessages.push(msg);
-      setTimeout(() => {
-        if (queues.has(interaction.guildId) && queue.sessionMessages.includes(msg)) {
-          msg.delete().catch(() => {});
-          queue.sessionMessages = queue.sessionMessages.filter(m => m !== msg);
-        }
-      }, 15000);
-    });
+  const { resource: { message: queueMsg } } = await interaction.reply({ content: queueMessage, withResponse: true });
+  queue.sessionMessages.push(queueMsg);
+  setTimeout(() => {
+    if (queues.has(interaction.guildId) && queue.sessionMessages.includes(queueMsg)) {
+      queueMsg.delete().catch(() => {});
+      queue.sessionMessages = queue.sessionMessages.filter(m => m !== queueMsg);
+    }
+  }, 15000);
 }
 
 function handleRemove(interaction) {
@@ -1096,26 +1093,24 @@ async function handleJoin(interaction) {
   queues.set(interaction.guildId, queue);
   await queue.connect();
 
-  return interaction.reply({ content: `✅ Joined **${voiceChannel.name}**! Use \`/play\` to start music.`, fetchReply: true })
-    .then(msg => {
-      queue.sessionMessages.push(msg);
-      setTimeout(() => {
-        if (queues.has(interaction.guildId) && queue.sessionMessages.includes(msg)) {
-          msg.delete().catch(() => {});
-          queue.sessionMessages = queue.sessionMessages.filter(m => m !== msg);
-        }
-      }, 10000);
-    });
+  const { resource: { message: msg } } = await interaction.reply({ content: `✅ Joined **${voiceChannel.name}**! Use \`/play\` to start music.`, withResponse: true });
+  queue.sessionMessages.push(msg);
+  setTimeout(() => {
+    if (queues.has(interaction.guildId) && queue.sessionMessages.includes(msg)) {
+      msg.delete().catch(() => {});
+      queue.sessionMessages = queue.sessionMessages.filter(m => m !== msg);
+    }
+  }, 10000);
 }
 
-function handleLeave(interaction) {
+async function handleLeave(interaction) {
   const queue = queues.get(interaction.guildId);
 
   // Check if bot is in a voice channel via the queue
   if (queue && queue.connection) {
     queue.destroy();
-    return interaction.reply({ content: '👋 Left the voice channel and cleared the queue.', fetchReply: true })
-      .then(msg => setTimeout(() => msg.delete().catch(() => {}), 5000));
+    const { resource: { message: leaveMsg } } = await interaction.reply({ content: '👋 Left the voice channel and cleared the queue.', withResponse: true });
+    return setTimeout(() => leaveMsg.delete().catch(() => {}), 5000);
   }
 
   // Check if bot is in a voice channel at all (even without a queue)
@@ -1124,8 +1119,8 @@ function handleLeave(interaction) {
     const { getVoiceConnection } = require('@discordjs/voice');
     const connection = getVoiceConnection(interaction.guildId);
     if (connection) connection.destroy();
-    return interaction.reply({ content: '👋 Left the voice channel.', fetchReply: true })
-      .then(msg => setTimeout(() => msg.delete().catch(() => {}), 5000));
+    const { resource: { message: leaveMsg2 } } = await interaction.reply({ content: '👋 Left the voice channel.', withResponse: true });
+    return setTimeout(() => leaveMsg2.delete().catch(() => {}), 5000);
   }
 
   return interaction.reply({ content: '❌ I am not in a voice channel!', flags: MessageFlags.Ephemeral });
@@ -1143,16 +1138,15 @@ async function handleMove(interaction) {
     const newQueue = new GuildQueue(interaction.guildId, interaction.channel, voiceChannel);
     queues.set(interaction.guildId, newQueue);
     await newQueue.connect();
-    return interaction.reply({ content: `🔊 Joined and bound to **${voiceChannel.name}**!`, fetchReply: true })
-      .then(msg => {
-        newQueue.sessionMessages.push(msg);
-        setTimeout(() => {
-          if (queues.has(interaction.guildId) && newQueue.sessionMessages.includes(msg)) {
-            msg.delete().catch(() => {});
-            newQueue.sessionMessages = newQueue.sessionMessages.filter(m => m !== msg);
-          }
-        }, 10000);
-      });
+    const { resource: { message: joinMsg } } = await interaction.reply({ content: `🔊 Joined and bound to **${voiceChannel.name}**!`, withResponse: true });
+    newQueue.sessionMessages.push(joinMsg);
+    setTimeout(() => {
+      if (queues.has(interaction.guildId) && newQueue.sessionMessages.includes(joinMsg)) {
+        joinMsg.delete().catch(() => {});
+        newQueue.sessionMessages = newQueue.sessionMessages.filter(m => m !== joinMsg);
+      }
+    }, 10000);
+    return;
   }
 
   if (queue.voiceChannel.id === voiceChannel.id) {
@@ -1165,16 +1159,14 @@ async function handleMove(interaction) {
 
   await queue.connect();
 
-  return interaction.reply({ content: `🚚 Moved to **${voiceChannel.name}**!`, fetchReply: true })
-    .then(msg => {
-      queue.sessionMessages.push(msg);
-      setTimeout(() => {
-        if (queues.has(interaction.guildId) && queue.sessionMessages.includes(msg)) {
-          msg.delete().catch(() => {});
-          queue.sessionMessages = queue.sessionMessages.filter(m => m !== msg);
-        }
-      }, 10000);
-    });
+  const { resource: { message: moveMsg } } = await interaction.reply({ content: `🚚 Moved to **${voiceChannel.name}**!`, withResponse: true });
+  queue.sessionMessages.push(moveMsg);
+  setTimeout(() => {
+    if (queues.has(interaction.guildId) && queue.sessionMessages.includes(moveMsg)) {
+      moveMsg.delete().catch(() => {});
+      queue.sessionMessages = queue.sessionMessages.filter(m => m !== moveMsg);
+    }
+  }, 10000);
 }
 
 async function handleControls(interaction) {

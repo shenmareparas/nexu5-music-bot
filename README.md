@@ -10,7 +10,7 @@ A clean, modern, and performant Discord Music Bot utilizing **discord.js v14**, 
 - ⚡ **Ultra-low Latency Audio Pipeline**: Leverages native **Ogg Opus** encoding within `ffmpeg` (`-c:a libopus -f opus`) to ensure high-fidelity, stutter-free playback without speed fluctuations.
 - 🔍 **Interactive Song Search**: Use `/find` to search YouTube and select one or more songs to queue via a user-scoped, interactive dropdown select menu.
 - 🗂️ **Instant Playlist Loading**: Supports YouTube playlists, mixes, and radios. Automatically begins playing the first song instantly while resolving and loading the rest in the background.
-- 🔒 **DAVE Protocol Ready**: Preconfigured with `@snazzah/davey` to support Discord's E2E voice encryption protocols.
+- 🔒 **DAVE Protocol Ready**: Preconfigured with `@snazzah/davey` to support Discord's E2E voice encryption protocols. The `Disconnected` handler correctly races `Ready` state to avoid false-positive destroy calls triggered by the DAVE handshake.
 - 🛡️ **Fault-Tolerant Networking**: Resilient handling of UDP socket and voice connection error events (such as `EHOSTUNREACH`) to prevent uncaught exceptions and process crashes.
 
 ## Prerequisites
