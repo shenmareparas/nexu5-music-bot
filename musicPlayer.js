@@ -164,18 +164,7 @@ async function ytdlpSearch(query, limit = 1) {
  * Fetch metadata for a single YouTube video via yt-dlp (avoids play-dl 429s).
  * Returns { title, url, duration } or null on failure.
  */
-async function ytdlpVideoInfo(url) {
-  const cookiesArg = fs.existsSync(cookiesPath) ? ['--cookies', cookiesPath] : [];
-  const args = [
-    url,
-    '--dump-json',
-    '--no-playlist',
-    '--no-warnings',
-    // Fall back to ios, web, and android clients. Allows cookies to be used on web/android when required.
-    '--extractor-args', 'youtube:player_client=ios,web,android;formats=missing_pot',
-    ...cookiesArg,
-  ];
-
+function runYtdlpVideoInfoPromise(args, url) {
   return new Promise((resolve) => {
     let resolved = false;
     const safeResolve = (val) => {
@@ -211,10 +200,8 @@ async function ytdlpVideoInfo(url) {
             duration
           });
         } catch (_) {
-          // Log the actual yt-dlp error so it's visible in bot logs
-          console.error(`[ytdlpVideoInfo] yt-dlp exited with code ${code} for URL: ${url}`);
           if (stderr.trim()) {
-            console.error(`[ytdlpVideoInfo] stderr:\n${stderr.trim()}`);
+            console.error(`[ytdlpVideoInfo] yt-dlp exited with code ${code} for URL: ${url}. Stderr:\n${stderr.trim()}`);
           }
           safeResolve(null);
         }
@@ -224,6 +211,31 @@ async function ytdlpVideoInfo(url) {
       safeResolve(null);
     }
   });
+}
+
+async function ytdlpVideoInfo(url) {
+  const baseArgs = [
+    url,
+    '--dump-json',
+    '--no-playlist',
+    '--no-warnings',
+    // Fall back to ios, web, and android clients.
+    '--extractor-args', 'youtube:player_client=ios,web,android;formats=missing_pot',
+  ];
+
+  // Try WITHOUT cookies first (allows ios client to run without being skipped)
+  console.log(`[yt-dlp] Fetching video info for: ${url} (without cookies)`);
+  let result = await runYtdlpVideoInfoPromise(baseArgs, url);
+  if (result) return result;
+
+  // Retry WITH cookies if available
+  if (fs.existsSync(cookiesPath)) {
+    console.log(`[yt-dlp] Fetching video info failed. Retrying with cookies for: ${url}`);
+    const argsWithCookies = [...baseArgs, '--cookies', cookiesPath];
+    return await runYtdlpVideoInfoPromise(argsWithCookies, url);
+  }
+
+  return null;
 }
 
 
@@ -301,11 +313,25 @@ class GuildQueue {
     this.sessionMessages = [];
     this.ytDlpProcess = null;
     this.ffmpegProcess = null;
-
+    this.usedCookies = false;
+    this.playbackFailed = false;
 
     // Handle player states
     this.player.on(AudioPlayerStatus.Idle, () => {
       console.log(`[player] State transition: Idle`);
+      if (this.playbackFailed) {
+        this.playbackFailed = false;
+        const cookiesPath = path.join(__dirname, 'cookies.txt');
+        if (fs.existsSync(cookiesPath) && !this.usedCookies) {
+          console.log('[queue] Playback failed. Retrying with cookies...');
+          this.playNext(true);
+          return;
+        } else {
+          this.textChannel.send(`⚠️ Failed to play **${this.songs[0]?.title || 'Unknown Song'}** (Requested format not available).`)
+            .then(msg => this.sessionMessages.push(msg))
+            .catch(() => {});
+        }
+      }
       this.songs.shift(); // Remove completed song
       this.playNext();
     });
@@ -405,7 +431,9 @@ class GuildQueue {
     return song; // Signals it was queued
   }
 
-  async playNext() {
+  async playNext(retryWithCookies = false) {
+    this.usedCookies = retryWithCookies;
+    this.playbackFailed = false;
     if (this.nowPlayingMessage) {
       this.nowPlayingMessage.delete().catch(() => {});
       this.nowPlayingMessage = null;
@@ -515,7 +543,7 @@ class GuildQueue {
       ];
 
       const cookiesPath = path.join(__dirname, 'cookies.txt');
-      if (fs.existsSync(cookiesPath)) {
+      if (retryWithCookies && fs.existsSync(cookiesPath)) {
         console.log('[yt-dlp] Found cookies.txt. Passing cookies to yt-dlp.');
         ytDlpArgs.push('--cookies', cookiesPath);
       }
@@ -562,6 +590,9 @@ class GuildQueue {
       this.ytDlpProcess.on('error', err => console.error('[yt-dlp-error]', err));
       this.ytDlpProcess.on('close', code => {
         console.log(`[yt-dlp] exited with code ${code}`);
+        if (code !== 0 && !this.ytDlpProcess.killedByBot) {
+          this.playbackFailed = true;
+        }
       });
 
       this.ffmpegProcess.stderr.on('data', data => {
@@ -636,6 +667,7 @@ class GuildQueue {
     if (this.ytDlpProcess) {
       try {
         console.log(`[cleanup] Killing yt-dlp process (PID: ${this.ytDlpProcess.pid})`);
+        this.ytDlpProcess.killedByBot = true;
         this.ytDlpProcess.kill('SIGKILL');
       } catch (e) {}
       this.ytDlpProcess = null;
