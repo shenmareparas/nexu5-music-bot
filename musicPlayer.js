@@ -253,6 +253,13 @@ async function ytdlpVideoInfo(url) {
     '--remote-components', 'ejs:github',
   ];
 
+  if (process.env.FORCE_IPV6 === 'true') {
+    baseArgs.push('--force-ipv6');
+  }
+  if (process.env.YT_PROXY) {
+    baseArgs.push('--proxy', process.env.YT_PROXY);
+  }
+
   // Try WITHOUT cookies first (allows ios client to run without being skipped)
   console.log(`[yt-dlp] Fetching video info for: ${url} (without cookies)`);
   let result = await runYtdlpVideoInfoPromise(baseArgs, url);
@@ -574,6 +581,13 @@ class GuildQueue {
         '-f', 'bestaudio/best',
         '-o', '-',                             // stream to stdout
       ];
+
+      if (process.env.FORCE_IPV6 === 'true') {
+        ytDlpArgs.push('--force-ipv6');
+      }
+      if (process.env.YT_PROXY) {
+        ytDlpArgs.push('--proxy', process.env.YT_PROXY);
+      }
 
       const cookiesPath = path.join(__dirname, 'cookies.txt');
       if (retryWithCookies && fs.existsSync(cookiesPath)) {
