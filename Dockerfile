@@ -1,7 +1,10 @@
 FROM oven/bun:latest
 
-# Install ffmpeg, python3 (required by yt-dlp), and nodejs (required by yt-dlp's JS challenge solver)
-RUN apt-get update && apt-get install -y ffmpeg python3 nodejs && rm -rf /var/lib/apt/lists/*
+# Install ffmpeg, python3, pip, and nodejs (required for yt-dlp and its JS challenge solver)
+RUN apt-get update && apt-get install -y ffmpeg python3 python3-pip nodejs && rm -rf /var/lib/apt/lists/*
+
+# Install yt-dlp[default] via pip to ensure the JS n-challenge solver (EJS) scripts are present
+RUN pip3 install --no-cache-dir --break-system-packages "yt-dlp[default]"
 
 WORKDIR /app
 
