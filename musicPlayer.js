@@ -165,14 +165,15 @@ async function ytdlpSearch(query, limit = 1) {
  * Returns { title, url, duration } or null on failure.
  */
 async function ytdlpVideoInfo(url) {
+  const cookiesArg = fs.existsSync(cookiesPath) ? ['--cookies', cookiesPath] : [];
   const args = [
     url,
     '--dump-json',
     '--no-playlist',
     '--no-warnings',
-    // Use iOS player client and bypass GVS PO Token enforcement.
-    // Omit cookies to prevent yt-dlp from skipping the iOS client.
-    '--extractor-args', 'youtube:player_client=ios;formats=missing_pot',
+    // Fall back to ios, web, and android clients. Allows cookies to be used on web/android when required.
+    '--extractor-args', 'youtube:player_client=ios,web,android;formats=missing_pot',
+    ...cookiesArg,
   ];
 
   return new Promise((resolve) => {
@@ -507,17 +508,19 @@ class GuildQueue {
       const ytDlpArgs = [
         '--no-update',
         '--no-playlist',
-        // Use iOS player client — bypasses the JavaScript n-challenge solver requirement.
-        // The iOS client uses OAuth-based tokens instead of the JS-based nsig challenge,
-        // making it the reliable choice for server-side bots without a Node/Deno runtime.
-        // We add formats=missing_pot to bypass GVS PO Token enforcement on the iOS client.
-        // We do NOT pass cookies here, as the iOS client does not support them and passing them
-        // causes yt-dlp to skip the iOS client entirely.
-        '--extractor-args', 'youtube:player_client=ios;formats=missing_pot',
+        // Use a client fallback list: ios (fast, no n-challenge, no-cookies), and web/android (supports cookies, solves n-challenge with Node.js)
+        '--extractor-args', 'youtube:player_client=ios,web,android;formats=missing_pot',
         '-f', 'bestaudio/best',
         '-o', '-',                             // stream to stdout
-        song.url
       ];
+
+      const cookiesPath = path.join(__dirname, 'cookies.txt');
+      if (fs.existsSync(cookiesPath)) {
+        console.log('[yt-dlp] Found cookies.txt. Passing cookies to yt-dlp.');
+        ytDlpArgs.push('--cookies', cookiesPath);
+      }
+
+      ytDlpArgs.push(song.url);
 
       this.ytDlpProcess = spawn(ytDlpPath, ytDlpArgs);
 
