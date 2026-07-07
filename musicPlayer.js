@@ -93,6 +93,12 @@ async function ensureYtdlp() {
   } catch (e) {
     console.log(`[diagnostics] 'pip3 show' failed: ${e.message}`);
   }
+  try {
+    const denoVer = execSync('deno --version', { encoding: 'utf8' }).trim();
+    console.log(`[diagnostics] 'deno --version' output:\n${denoVer}`);
+  } catch (e) {
+    console.log(`[diagnostics] 'deno --version' failed: ${e.message}`);
+  }
   for (const file of ['/usr/bin/node', '/usr/bin/nodejs', '/usr/local/bin/node']) {
     if (fs.existsSync(file)) {
       try {
@@ -282,7 +288,7 @@ async function ytdlpVideoInfo(url) {
     '-v',
     // Fall back to ios, web, and android clients.
     '--extractor-args', 'youtube:player_client=ios,web,android;formats=missing_pot',
-    '--js-runtimes', `node:${getNodeJsPath()}`,
+    '--js-runtimes', `deno,node:${getNodeJsPath()}`,
     '--remote-components', 'ejs:github',
   ];
 
@@ -602,7 +608,7 @@ class GuildQueue {
         '-v',
         // Use a client fallback list: ios (fast, no n-challenge, no-cookies), and web/android (supports cookies, solves n-challenge with Node.js)
         '--extractor-args', 'youtube:player_client=ios,web,android;formats=missing_pot',
-        '--js-runtimes', `node:${getNodeJsPath()}`,
+        '--js-runtimes', `deno,node:${getNodeJsPath()}`,
         '--remote-components', 'ejs:github',
         '-f', 'bestaudio/best',
         '-o', '-',                             // stream to stdout
