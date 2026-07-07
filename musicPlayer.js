@@ -65,6 +65,13 @@ function getSystemYtdlpPath() {
   return null;
 }
 
+function getNodeJsPath() {
+  if (fs.existsSync('/usr/bin/nodejs')) {
+    return '/usr/bin/nodejs';
+  }
+  return 'node';
+}
+
 async function ensureYtdlp() {
   if (process.env.YTDLP_PATH) {
     YTDLP_PATH = process.env.YTDLP_PATH;
@@ -233,7 +240,6 @@ function runYtdlpVideoInfoPromise(args, url) {
     }
   });
 }
-
 async function ytdlpVideoInfo(url) {
   const baseArgs = [
     url,
@@ -242,6 +248,7 @@ async function ytdlpVideoInfo(url) {
     '--no-warnings',
     // Fall back to ios, web, and android clients.
     '--extractor-args', 'youtube:player_client=ios,web,android;formats=missing_pot',
+    '--js-runtimes', `node:${getNodeJsPath()}`,
   ];
 
   // Try WITHOUT cookies first (allows ios client to run without being skipped)
@@ -559,6 +566,7 @@ class GuildQueue {
         '--no-playlist',
         // Use a client fallback list: ios (fast, no n-challenge, no-cookies), and web/android (supports cookies, solves n-challenge with Node.js)
         '--extractor-args', 'youtube:player_client=ios,web,android;formats=missing_pot',
+        '--js-runtimes', `node:${getNodeJsPath()}`,
         '-f', 'bestaudio/best',
         '-o', '-',                             // stream to stdout
       ];
