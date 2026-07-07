@@ -7,7 +7,7 @@ This document provides a guide for AI developer agents and engineers working on 
 - **Runtime**: [Bun](https://bun.sh/) (do not use Node.js or npm commands).
 - **Discord API Library**: `discord.js` v14.
 - **Voice Library**: `@discordjs/voice` with `@snazzah/davey` for Discord DAVE end-to-end voice encryption support.
-- **Audio Downloader**: `play-dl` + `yt-dlp` (spawning yt-dlp child processes).
+- **Audio Downloader / Metadata**: `yt-dlp` (spawning child processes). Used for **all** YouTube operations: search, video metadata, playlist enumeration, and audio streaming. `play-dl` is retained only for Spotify URL parsing (`play.spotify()`).
 - **Audio Transcoder**: `ffmpeg` (via `ffmpeg-static` or system path).
   - *Optimization Note*: The `-re` (real-time) input flag has been removed from `ffmpeg` arguments. This allows `ffmpeg` to download and transcode audio as fast as possible, buffering the stream to prevent premature cutoffs and `Idle` state triggers caused by network jitter.
 
@@ -21,18 +21,26 @@ This document provides a guide for AI developer agents and engineers working on 
 - **Buttons Dispatch**: Routes interaction events (e.g., `skip`, `pause_resume`, `stop`, `queue_list`) to the corresponding `MusicPlayer` guild instance.
 - **Select Menu Dispatch**: Routes interaction events (specifically for `/find` search results) to `musicPlayer.handleSelectMenu`.
 
-### 2. [musicPlayer.js](file:///Users/parasshenmare/Developer/other_projects/discord-music-bot/musicPlayer.js)
+### 2. [musicPlayer.js](file:///Users/parasshenmare/Developer/other_projects/nexu5-music-bot/musicPlayer.js)
 - **Role**: State manager for a guild's voice connection, audio playback queue, active child processes, temporary Discord message instances, and search states.
 - **Key Concepts**:
   - **Ogg Opus Streaming**: Streams are transcoded directly into Ogg Opus (`-c:a libopus -f opus`) by `ffmpeg` and played as `StreamType.OggOpus`. This avoids JS-based transcoding performance drops.
-  - **Error Handling / Pipes**: Ensure both `ytDlpProcess.stdout` and `ffmpegProcess.stdin` have `.on('error', ...)` attached to avoid crashing the Bun runtime on pipe termination (`EPIPE`).
+  - **Error Handling / Pipes**: 
+    - Ensure both `ytDlpProcess.stdout` and `ffmpegProcess.stdin` have `.on('error', ...)` attached to avoid crashing the Bun runtime on pipe termination (`EPIPE`).
+    - Listen to `'error'` events on `this.connection` (VoiceConnection) to prevent uncaught network exceptions (e.g. `EHOSTUNREACH: host is unreachable`) from bubbling up.
+  - **Connection Lifecycle & Moving**: All voice connection lifecycle events and listeners (including debugging and disconnection handlers) are managed in a unified `connect()` method. Movement to a different voice channel (e.g., in `handleMove`) reuses `connect()` to keep event registration consistent.
   - **Stderr Filtering**: Filters out `yt-dlp`'s Bun deprecation warning (`bun support has been deprecated`) from standard logging to keep the console clean.
   - **Self-Cleaning / Session Messages**: Every interactive response or Now Playing banner is registered in `sessionMessages` or `nowPlayingMessage`. Upon disconnection, track completion, or skip, these messages are deleted.
   - **Set-based Deletion**: The `destroy()` method deduplicates deleted messages using a `Set` and suppresses code `10008` (Unknown Message) errors in case messages were deleted manually by users.
   - **Auto-Leave Guard**: A 15-second empty voice channel check is registered via `emptyTimeout` when voice channel members list drops to just the bot.
   - **URL Normalization**: Normalizes YouTube Music URLs (`music.youtube.com`) to standard YouTube URLs in `handlePlay` and strips query parameters that interfere with parsing.
   - **Asynchronous Playlist Loading (`loadYtPlaylist`)**: Enumerates playlists (including YouTube Mixes and Radios) via `yt-dlp --flat-playlist`. Queues the first track synchronously so music starts playing immediately, then loads all remaining tracks asynchronously in the background.
-  - **Ephemeral Search Flow (`handleFind` / `handleSelectMenu`)**: Uses `play.search` to get up to 5 YouTube results. Search embeds and select menus are ephemeral and restricted to the requesting user. Pending search results are stored in `pendingSearchResults` keyed by the user's ID and expire after 60 seconds. Supports multi-selection, allowing users to queue multiple songs from a single search.
+  - **yt-dlp Search & Metadata Helpers**: Two module-level functions replace all `play-dl` YouTube HTTP calls to prevent 429 rate-limit errors on cloud IPs:
+    - `ytdlpSearch(query, limit)` — runs `yt-dlp ytsearch<N>:<query> --flat-playlist --dump-json` and returns `[{ title, url, duration }]`. Used by `/play` (text search), `/find`, and Spotify track lookups.
+    - `ytdlpVideoInfo(url)` — runs `yt-dlp <url> --dump-json --no-playlist` and returns `{ title, url, duration }`. Used by `/play` when given a direct YouTube video URL.
+    - Both helpers automatically pass `--extractor-args youtube:player_skip=webpage,configs` and `--cookies cookies.txt` (if present).
+  - **URL Type Detection (no-network)**: `handlePlay` no longer calls `play.validate()` (which made a YouTube HTTP request). Instead, query type (YouTube video, playlist, Spotify, plain search) is detected locally by parsing the URL hostname and path.
+  - **Ephemeral Search Flow (`handleFind` / `handleSelectMenu`)**: Uses `ytdlpSearch` to get up to 5 YouTube results. Search embeds and select menus are ephemeral and restricted to the requesting user. Pending search results are stored in `pendingSearchResults` keyed by the user's ID and expire after 60 seconds. Supports multi-selection, allowing users to queue multiple songs from a single search.
   - **Ephemeral Messaging**: Ephemeral messages are sent using `MessageFlags.Ephemeral` in `interaction.reply` or `interaction.followUp`.
 
 ## Commands for Agents
@@ -55,8 +63,10 @@ bun start
 - `YTDLP_PATH`: (Optional) Override path to the `yt-dlp` executable.
 
 ## Bypassing YouTube Rate Limits (HTTP 429 / 403)
-- When running in cloud hosting environments like Railway, YouTube may rate-limit the bot's IP with HTTP 429 when trying to scrape the initial video webpage.
-- To prevent this, `yt-dlp` is configured with `--extractor-args "youtube:player_skip=webpage,configs"`. This bypasses scraping the HTML webpage, directly requesting the stream configs via API clients using a local Bun JS runtime and remote component solver.
+- All YouTube interactions — **search, video metadata, playlist enumeration, and audio streaming** — are routed exclusively through `yt-dlp`. This is intentional: `play-dl`'s `play.search()`, `play.video_info()`, and `play.validate()` make direct HTTP requests to YouTube's internal APIs, which get rate-limited (429) on cloud-hosted IPs.
+- Every `yt-dlp` invocation includes `--extractor-args "youtube:player_skip=webpage,configs"` to skip the HTML webpage scrape and go straight to the stream config API.
+- Cookies (`cookies.txt` / `YOUTUBE_COOKIES` env var) are passed to all `yt-dlp` calls for authenticated access.
+- `play-dl` is kept as a dependency **only** for Spotify URL parsing via `play.spotify()`. Do not add new `play.search`, `play.video_info`, or `play.validate` calls — use `ytdlpSearch` and `ytdlpVideoInfo` instead.
 - **Preventing Cookie Expiration**: Since YouTube rotates token sessions when you actively browse the site on the same profile, cookies exported from your main profile expire almost daily. To fix this:
   1. Open a new **Incognito/Private Window**.
   2. Log into YouTube.

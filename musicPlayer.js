@@ -89,6 +89,93 @@ async function ensureYtdlp() {
 // Check and download on startup
 ensureYtdlp();
 
+/**
+ * Search YouTube via yt-dlp to avoid 429s from play-dl's raw HTTP requests.
+ * Returns an array of { title, url, duration } objects (up to `limit` results).
+ */
+async function ytdlpSearch(query, limit = 1) {
+  const cookiesArg = fs.existsSync(cookiesPath) ? ['--cookies', cookiesPath] : [];
+  const args = [
+    `ytsearch${limit}:${query}`,
+    '--flat-playlist',
+    '--dump-json',
+    '--no-warnings',
+    '--extractor-args', 'youtube:player_skip=webpage,configs',
+    ...cookiesArg,
+  ];
+
+  return new Promise((resolve) => {
+    const proc = spawn(YTDLP_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', d => { stdout += d.toString(); });
+    proc.stderr.on('data', d => { stderr += d.toString(); });
+    proc.on('close', () => {
+      const results = [];
+      for (const line of stdout.trim().split('\n')) {
+        if (!line) continue;
+        try {
+          const entry = JSON.parse(line);
+          const secs = entry.duration || 0;
+          const h = Math.floor(secs / 3600);
+          const m = Math.floor((secs % 3600) / 60);
+          const s = Math.floor(secs % 60);
+          const duration = h > 0
+            ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+            : `${m}:${String(s).padStart(2,'0')}`;
+          results.push({
+            title: entry.title || entry.id,
+            url: entry.url || `https://www.youtube.com/watch?v=${entry.id}`,
+            duration
+          });
+        } catch (_) {}
+      }
+      resolve(results);
+    });
+  });
+}
+
+/**
+ * Fetch metadata for a single YouTube video via yt-dlp (avoids play-dl 429s).
+ * Returns { title, url, duration } or null on failure.
+ */
+async function ytdlpVideoInfo(url) {
+  const cookiesArg = fs.existsSync(cookiesPath) ? ['--cookies', cookiesPath] : [];
+  const args = [
+    url,
+    '--dump-json',
+    '--no-playlist',
+    '--no-warnings',
+    '--extractor-args', 'youtube:player_skip=webpage,configs',
+    ...cookiesArg,
+  ];
+
+  return new Promise((resolve) => {
+    const proc = spawn(YTDLP_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    proc.stdout.on('data', d => { stdout += d.toString(); });
+    proc.on('close', () => {
+      try {
+        const entry = JSON.parse(stdout.trim());
+        const secs = entry.duration || 0;
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        const s = Math.floor(secs % 60);
+        const duration = h > 0
+          ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+          : `${m}:${String(s).padStart(2,'0')}`;
+        resolve({
+          title: entry.title || entry.id,
+          url: entry.webpage_url || url,
+          duration
+        });
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  });
+}
+
 
 async function getSpotifyEmbedData(query) {
   const urlObj = new URL(query);
@@ -693,31 +780,48 @@ async function handlePlay(interaction, query, playTop = false) {
       // Not a URL — leave query as-is (plain search string)
     }
 
-    // Validate the query type (YT video, playlist, soundcloud, spotify, etc.)
-    const validationType = await play.validate(query);
-
-    if (validationType === 'yt_video' || validationType === 'yt_playlist' || validationType === 'search') {
-      if (validationType === 'search') {
-        const searchResults = await play.search(query, { limit: 1 });
-        if (searchResults.length === 0) {
-          return interaction.editReply(`❌ No results found for: \`${query}\``);
+    // Detect query type without calling play.validate() (which hits YouTube and can 429)
+    let isYtVideoUrl = false;
+    let isYtPlaylistUrl = false;
+    let isSpUrl = false;
+    let spType = null;
+    try {
+      const u = new URL(query);
+      const host = u.hostname.replace(/^www\./, '');
+      if (host === 'youtube.com' || host === 'youtu.be' || host === 'music.youtube.com') {
+        if (u.searchParams.has('list')) {
+          isYtPlaylistUrl = true;
+        } else {
+          isYtVideoUrl = true;
         }
-        songInfo = {
-          title: searchResults[0].title,
-          url: searchResults[0].url,
-          duration: searchResults[0].durationRaw
-        };
-      } else if (validationType === 'yt_playlist' || (validationType === 'yt_video' && query.includes('list='))) {
-        return await loadYtPlaylist(interaction, query, voiceChannel, playTop);
-      } else if (validationType === 'yt_video') {
-        const videoInfo = await play.video_info(query);
-        songInfo = {
-          title: videoInfo.video_details.title,
-          url: videoInfo.video_details.url,
-          duration: videoInfo.video_details.durationRaw
-        };
+      } else if (host === 'open.spotify.com') {
+        isSpUrl = true;
+        const parts = u.pathname.split('/');
+        spType = parts.find(p => p === 'track' || p === 'playlist' || p === 'album') || null;
       }
-    } else if (validationType === 'sp_track' || validationType === 'sp_playlist' || validationType === 'sp_album') {
+    } catch (_) {
+      // Not a URL — treat as plain search text
+    }
+
+    if (isYtPlaylistUrl) {
+      return await loadYtPlaylist(interaction, query, voiceChannel, playTop);
+    } else if (isYtVideoUrl) {
+      const videoInfo = await ytdlpVideoInfo(query);
+      if (!videoInfo) {
+        return interaction.editReply(`❌ Could not fetch info for: \`${query}\``);
+      }
+      songInfo = videoInfo;
+    } else if (!isSpUrl) {
+      // Plain text search — use yt-dlp to avoid 429s
+      const searchResults = await ytdlpSearch(query, 1);
+      if (searchResults.length === 0) {
+        return interaction.editReply(`❌ No results found for: \`${query}\``);
+      }
+      songInfo = searchResults[0];
+    }
+
+    if (isSpUrl) {
+      const validationType = 'sp_' + spType; // e.g. 'sp_track', 'sp_playlist', 'sp_album'
       // play-dl handles spotify redirection to youtube automatically
       if (typeof play.is_spotify_creds_present === 'function' && play.is_spotify_creds_present()) {
         // Handle native spotify streaming if credentials are configured
@@ -736,14 +840,14 @@ async function handlePlay(interaction, query, playTop = false) {
         }
       }
       if (validationType === 'sp_track') {
-        const searchResults = await play.search(`${spData.name} ${spData.artists.map(a => a.name).join(' ')}`, { limit: 1 });
+        const searchResults = await ytdlpSearch(`${spData.name} ${spData.artists.map(a => a.name).join(' ')}`, 1);
         if (searchResults.length === 0) {
           return interaction.editReply(`❌ Could not find YouTube match for Spotify track: **${spData.name}**`);
         }
         songInfo = {
           title: spData.name,
           url: searchResults[0].url,
-          duration: searchResults[0].durationRaw
+          duration: searchResults[0].duration
         };
       } else {
         // Spotify Playlist or Album
@@ -759,42 +863,17 @@ async function handlePlay(interaction, query, playTop = false) {
         let loadedCount = 0;
         let insertIndex = 1;
         for (const track of tracks) {
-          const searchResults = await play.search(`${track.name} ${track.artists.map(a => a.name).join(' ')}`, { limit: 1 });
+          const searchResults = await ytdlpSearch(`${track.name} ${track.artists.map(a => a.name).join(' ')}`, 1);
           if (searchResults.length > 0) {
             await queue.addSong({
               title: track.name,
               url: searchResults[0].url,
-              duration: searchResults[0].durationRaw
+              duration: searchResults[0].duration
             }, interaction.user, playTop, insertIndex++);
             loadedCount++;
           }
         }
         return interaction.followUp(`✅ Loaded **${loadedCount}** tracks from Spotify list to the ${playTop ? 'top of the ' : ''}queue!`);
-      }
-    } else {
-      // Check if this is a YouTube URL with a playlist parameter that play.validate() didn't recognise
-      // (e.g. YouTube Mix / Radio playlists: LRYR…, RDLR…, RD…, etc.)
-      let isYtPlaylistUrl = false;
-      try {
-        const u = new URL(query);
-        isYtPlaylistUrl =
-          (u.hostname === 'www.youtube.com' || u.hostname === 'youtube.com' || u.hostname === 'youtu.be') &&
-          u.searchParams.has('list');
-      } catch (_) {}
-
-      if (isYtPlaylistUrl) {
-        return await loadYtPlaylist(interaction, query, voiceChannel, playTop);
-      } else {
-        // Plain text search fallback
-        const searchResults = await play.search(query, { limit: 1 });
-        if (searchResults.length === 0) {
-          return interaction.editReply(`❌ Unsupported URL or no search results for: \`${query}\``);
-        }
-        songInfo = {
-          title: searchResults[0].title,
-          url: searchResults[0].url,
-          duration: searchResults[0].durationRaw
-        };
       }
     }
 
@@ -1246,7 +1325,7 @@ async function handleFind(interaction, query) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const results = await play.search(query, { limit: 5, source: { youtube: 'video' } });
+    const results = await ytdlpSearch(query, 5);
 
     if (!results || results.length === 0) {
       return interaction.editReply(`❌ No results found for: \`${query}\``);
@@ -1259,7 +1338,7 @@ async function handleFind(interaction, query) {
       results: results.map(v => ({
         title: v.title,
         url: v.url,
-        duration: v.durationRaw
+        duration: v.duration
       })),
       requestedBy: interaction.user
     });
@@ -1272,7 +1351,7 @@ async function handleFind(interaction, query) {
       .setTitle(`🔍 Search results for: ${query}`)
       .setDescription(
         results
-          .map((v, i) => `**${i + 1}.** [${v.title}](${v.url}) \`${v.durationRaw}\``)
+          .map((v, i) => `**${i + 1}.** [${v.title}](${v.url}) \`${v.duration}\``)
           .join('\n')
       )
       .setFooter({ text: 'Select one or more songs from the dropdown below • expires in 60s' })
@@ -1286,7 +1365,7 @@ async function handleFind(interaction, query) {
       .addOptions(
         results.map((v, i) => ({
           label: v.title.length > 100 ? v.title.slice(0, 97) + '...' : v.title,
-          description: `Duration: ${v.durationRaw}`,
+          description: `Duration: ${v.duration}`,
           value: String(i)
         }))
       );

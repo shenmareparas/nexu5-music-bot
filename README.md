@@ -1,6 +1,6 @@
 # NEXU5 Music
 
-A clean, modern, and performant Discord Music Bot utilizing **discord.js v14**, **@discordjs/voice**, and **play-dl**, running on the **Bun** runtime. Includes automatic static `ffmpeg` fallback.
+A clean, modern, and performant Discord Music Bot utilizing **discord.js v14**, **@discordjs/voice**, and **yt-dlp**, running on the **Bun** runtime. Includes automatic static `ffmpeg` fallback.
 
 ## Features
 
@@ -11,6 +11,7 @@ A clean, modern, and performant Discord Music Bot utilizing **discord.js v14**, 
 - 🔍 **Interactive Song Search**: Use `/find` to search YouTube and select one or more songs to queue via a user-scoped, interactive dropdown select menu.
 - 🗂️ **Instant Playlist Loading**: Supports YouTube playlists, mixes, and radios. Automatically begins playing the first song instantly while resolving and loading the rest in the background.
 - 🔒 **DAVE Protocol Ready**: Preconfigured with `@snazzah/davey` to support Discord's E2E voice encryption protocols.
+- 🛡️ **Fault-Tolerant Networking**: Resilient handling of UDP socket and voice connection error events (such as `EHOSTUNREACH`) to prevent uncaught exceptions and process crashes.
 
 ## Prerequisites
 
@@ -102,6 +103,6 @@ This bot is fully configured for deployment on [Railway](https://railway.app) us
 > 5. Paste these cookies into your environment or `cookies.txt`.
 
 > [!NOTE]
-> The bot automatically passes `--extractor-args "youtube:player_skip=webpage,configs"` to `yt-dlp` to bypass the common HTTP 429 webpage blocks encountered on cloud platforms like Railway.
+> All YouTube interactions — including **search, metadata lookups, and audio streaming** — are routed through `yt-dlp`. This means `--extractor-args "youtube:player_skip=webpage,configs"` and your `cookies.txt` are applied uniformly across every operation, giving consistent 429-bypass coverage. `play-dl` is retained only for Spotify URL parsing (`play.spotify()`).
 
 
