@@ -146,15 +146,19 @@ async function ytdlpVideoInfo(url) {
     '--dump-json',
     '--no-playlist',
     '--no-warnings',
-    '--extractor-args', 'youtube:player_skip=webpage,configs',
+    // NOTE: Do NOT pass player_skip here. Unlike ytdlpSearch (--flat-playlist, no stream URL),
+    // --dump-json resolves the formats list which requires fetching the player config.
+    // Passing player_skip causes yt-dlp to exit non-zero with empty stdout → null result.
     ...cookiesArg,
   ];
 
   return new Promise((resolve) => {
     const proc = spawn(YTDLP_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
+    let stderr = '';
     proc.stdout.on('data', d => { stdout += d.toString(); });
-    proc.on('close', () => {
+    proc.stderr.on('data', d => { stderr += d.toString(); });
+    proc.on('close', (code) => {
       try {
         const entry = JSON.parse(stdout.trim());
         const secs = entry.duration || 0;
@@ -170,6 +174,11 @@ async function ytdlpVideoInfo(url) {
           duration
         });
       } catch (_) {
+        // Log the actual yt-dlp error so it's visible in bot logs
+        console.error(`[ytdlpVideoInfo] yt-dlp exited with code ${code} for URL: ${url}`);
+        if (stderr.trim()) {
+          console.error(`[ytdlpVideoInfo] stderr:\n${stderr.trim()}`);
+        }
         resolve(null);
       }
     });

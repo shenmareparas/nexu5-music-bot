@@ -10,7 +10,7 @@ This document provides a guide for AI developer agents and engineers working on 
 - **Audio Downloader / Metadata**: `yt-dlp` (spawning child processes). Used for **all** YouTube operations: search, video metadata, playlist enumeration, and audio streaming. `play-dl` is retained only for Spotify URL parsing (`play.spotify()`).
 - **Audio Transcoder**: `ffmpeg` (via `ffmpeg-static` or system path).
   - *Optimization Note*: The `-re` (real-time) input flag has been removed from `ffmpeg` arguments. This allows `ffmpeg` to download and transcode audio as fast as possible, buffering the stream to prevent premature cutoffs and `Idle` state triggers caused by network jitter.
-  - *`player_skip` Scope*: `--extractor-args youtube:player_skip=webpage,configs` is passed **only** to `ytdlpSearch` and `ytdlpVideoInfo` (metadata-only calls). It must **not** be passed to the streaming `yt-dlp` invocation in `playNext()` — yt-dlp needs to fetch the player configs to resolve the signed audio stream URL. Applying it to streaming silently breaks direct YouTube URL playback while text-search continues to work (search only dumps flat JSON, no stream URL needed).
+  - *`player_skip` Scope*: `--extractor-args youtube:player_skip=webpage,configs` is passed **only** to `ytdlpSearch` (flat-playlist/metadata-only search). It must **not** be passed to `ytdlpVideoInfo` (which uses `--dump-json` and resolves the formats list — requiring the player config), nor to the streaming invocation in `playNext()`. Applying it to either of those calls causes yt-dlp to exit non-zero with empty stdout, resulting in a silent `null` / "Could not fetch info" failure for direct YouTube URL playback.
 
 ## Architecture & Code Map
 
@@ -38,9 +38,9 @@ This document provides a guide for AI developer agents and engineers working on 
   - **URL Normalization**: Normalizes YouTube Music URLs (`music.youtube.com`) to standard YouTube URLs in `handlePlay` and strips query parameters that interfere with parsing.
   - **Asynchronous Playlist Loading (`loadYtPlaylist`)**: Enumerates playlists (including YouTube Mixes and Radios) via `yt-dlp --flat-playlist`. Queues the first track synchronously so music starts playing immediately, then loads all remaining tracks asynchronously in the background.
   - **yt-dlp Search & Metadata Helpers**: Two module-level functions replace all `play-dl` YouTube HTTP calls to prevent 429 rate-limit errors on cloud IPs:
-    - `ytdlpSearch(query, limit)` — runs `yt-dlp ytsearch<N>:<query> --flat-playlist --dump-json` and returns `[{ title, url, duration }]`. Used by `/play` (text search), `/find`, and Spotify track lookups.
-    - `ytdlpVideoInfo(url)` — runs `yt-dlp <url> --dump-json --no-playlist` and returns `{ title, url, duration }`. Used by `/play` when given a direct YouTube video URL.
-    - Both helpers automatically pass `--extractor-args youtube:player_skip=webpage,configs` and `--cookies cookies.txt` (if present).
+    - `ytdlpSearch(query, limit)` — runs `yt-dlp ytsearch<N>:<query> --flat-playlist --dump-json` and returns `[{ title, url, duration }]`. Used by `/play` (text search), `/find`, and Spotify track lookups. Passes `--extractor-args youtube:player_skip=webpage,configs` (safe here — only flat JSON is needed, no stream URL is resolved).
+    - `ytdlpVideoInfo(url)` — runs `yt-dlp <url> --dump-json --no-playlist` and returns `{ title, url, duration }`. Used by `/play` when given a direct YouTube video URL. Does **not** pass `player_skip` — `--dump-json` resolves the formats list which requires the player config. Also collects stderr and logs it on non-zero exit for debuggability.
+    - Both helpers automatically pass `--cookies cookies.txt` (if present).
   - **URL Type Detection (no-network)**: `handlePlay` no longer calls `play.validate()` (which made a YouTube HTTP request). Instead, query type (YouTube video, playlist, Spotify, plain search) is detected locally by parsing the URL hostname and path.
   - **Ephemeral Search Flow (`handleFind` / `handleSelectMenu`)**: Uses `ytdlpSearch` to get up to 5 YouTube results. Search embeds and select menus are ephemeral and restricted to the requesting user. Pending search results are stored in `pendingSearchResults` keyed by the user's ID and expire after 60 seconds. Supports multi-selection, allowing users to queue multiple songs from a single search.
   - **Ephemeral Messaging**: Ephemeral messages are sent using `MessageFlags.Ephemeral` in `interaction.reply` or `interaction.followUp`.
@@ -82,7 +82,7 @@ bun start
 
 ## Bypassing YouTube Rate Limits (HTTP 429 / 403)
 - All YouTube interactions — **search, video metadata, playlist enumeration, and audio streaming** — are routed exclusively through `yt-dlp`. This is intentional: `play-dl`'s `play.search()`, `play.video_info()`, and `play.validate()` make direct HTTP requests to YouTube's internal APIs, which get rate-limited (429) on cloud-hosted IPs.
-- Every `yt-dlp` invocation includes `--extractor-args "youtube:player_skip=webpage,configs"` to skip the HTML webpage scrape and go straight to the stream config API.
+- `--extractor-args "youtube:player_skip=webpage,configs"` is passed **only to `ytdlpSearch`** (flat-playlist search). It is intentionally omitted from `ytdlpVideoInfo` (needs player config to list formats) and the streaming invocation in `playNext()` (needs player config to resolve signed stream URLs).
 - Cookies (`cookies.txt` / `YOUTUBE_COOKIES` env var) are passed to all `yt-dlp` calls for authenticated access.
 - `play-dl` is kept as a dependency **only** for Spotify URL parsing via `play.spotify()`. Do not add new `play.search`, `play.video_info`, or `play.validate` calls — use `ytdlpSearch` and `ytdlpVideoInfo` instead.
 - **Preventing Cookie Expiration**: Since YouTube rotates token sessions when you actively browse the site on the same profile, cookies exported from your main profile expire almost daily. To fix this:
@@ -101,7 +101,12 @@ bun start
 ### Direct YouTube URL (`/play <url>`) does not play; text search works fine
 - **Symptom**: Pasting a YouTube link into `/play` produces no audio or silently fails; searching by song name plays correctly.
 - **Root Cause**: The streaming `yt-dlp` invocation in `playNext()` included `--extractor-args youtube:player_skip=webpage,configs`. This flag skips the player config fetch that yt-dlp needs to resolve the signed, time-limited audio stream URL. Text search is unaffected because `ytdlpSearch` only dumps flat JSON metadata — no stream URL is resolved at that stage.
-- **Fix**: Removed `--extractor-args youtube:player_skip=webpage,configs` (and the unused `--remote-components` / `--js-runtimes` flags) from the streaming invocation in `playNext()`. The `player_skip` flag is still correctly applied in `ytdlpSearch` and `ytdlpVideoInfo` where only metadata is fetched.
+- **Fix**: Removed `--extractor-args youtube:player_skip=webpage,configs` (and the unused `--remote-components` / `--js-runtimes` flags) from the streaming invocation in `playNext()`. The `player_skip` flag is correctly applied only in `ytdlpSearch` where only flat metadata is fetched.
+
+### `/play <url>` says "Could not fetch info for" — text search still works
+- **Symptom**: `/play <youtube-url>` replies with `❌ Could not fetch info for: <url>`. `/play <song name>` works fine.
+- **Root Cause**: `ytdlpVideoInfo` (the helper used for direct URL metadata lookup) was incorrectly passing `--extractor-args youtube:player_skip=webpage,configs`. Unlike `ytdlpSearch` which uses `--flat-playlist` (no stream URL resolution), `ytdlpVideoInfo` uses `--dump-json` which walks the formats list — this requires fetching the player config. With `player_skip` set, yt-dlp exits non-zero, stdout is empty, `JSON.parse` throws, and the function silently returns `null`. Stderr was also not collected, making the failure invisible in logs.
+- **Fix**: Removed `player_skip` from `ytdlpVideoInfo`. Added stderr collection and exit-code logging so any future failure surfaces the actual yt-dlp error in the bot console.
 
 ### `/play <url>` fails with "n challenge solving failed" / "Requested format is not available"
 - **Symptom**: yt-dlp logs show `n challenge solving failed` and `ERROR: Requested format is not available`. Audio never plays.
