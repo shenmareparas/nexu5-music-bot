@@ -87,6 +87,12 @@ async function ensureYtdlp() {
   } catch (e) {
     console.log(`[diagnostics] 'nodejs -v' failed: ${e.message}`);
   }
+  try {
+    const pipShow = execSync('pip3 show yt-dlp', { encoding: 'utf8' }).trim();
+    console.log(`[diagnostics] 'pip3 show yt-dlp' output:\n${pipShow}`);
+  } catch (e) {
+    console.log(`[diagnostics] 'pip3 show' failed: ${e.message}`);
+  }
   for (const file of ['/usr/bin/node', '/usr/bin/nodejs', '/usr/local/bin/node']) {
     if (fs.existsSync(file)) {
       try {
@@ -276,6 +282,7 @@ async function ytdlpVideoInfo(url) {
     // Fall back to ios, web, and android clients.
     '--extractor-args', 'youtube:player_client=ios,web,android;formats=missing_pot',
     '--js-runtimes', `node:${getNodeJsPath()}`,
+    '--remote-components', 'ejs:github',
   ];
 
   // Try WITHOUT cookies first (allows ios client to run without being skipped)
@@ -594,6 +601,7 @@ class GuildQueue {
         // Use a client fallback list: ios (fast, no n-challenge, no-cookies), and web/android (supports cookies, solves n-challenge with Node.js)
         '--extractor-args', 'youtube:player_client=ios,web,android;formats=missing_pot',
         '--js-runtimes', `node:${getNodeJsPath()}`,
+        '--remote-components', 'ejs:github',
         '-f', 'bestaudio/best',
         '-o', '-',                             // stream to stdout
       ];
