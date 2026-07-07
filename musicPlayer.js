@@ -73,6 +73,33 @@ function getNodeJsPath() {
 }
 
 async function ensureYtdlp() {
+  // Diagnostics
+  console.log(`[diagnostics] PATH: ${process.env.PATH}`);
+  try {
+    const nodeVer = execSync('node -v', { encoding: 'utf8' }).trim();
+    console.log(`[diagnostics] 'node -v' output: ${nodeVer}`);
+  } catch (e) {
+    console.log(`[diagnostics] 'node -v' failed: ${e.message}`);
+  }
+  try {
+    const nodejsVer = execSync('nodejs -v', { encoding: 'utf8' }).trim();
+    console.log(`[diagnostics] 'nodejs -v' output: ${nodejsVer}`);
+  } catch (e) {
+    console.log(`[diagnostics] 'nodejs -v' failed: ${e.message}`);
+  }
+  for (const file of ['/usr/bin/node', '/usr/bin/nodejs', '/usr/local/bin/node']) {
+    if (fs.existsSync(file)) {
+      try {
+        const link = fs.readlinkSync(file);
+        console.log(`[diagnostics] ${file} is a symlink to ${link}`);
+      } catch (e) {
+        console.log(`[diagnostics] ${file} exists (not a symlink or direct file)`);
+      }
+    } else {
+      console.log(`[diagnostics] ${file} does not exist`);
+    }
+  }
+
   if (process.env.YTDLP_PATH) {
     YTDLP_PATH = process.env.YTDLP_PATH;
     return;
