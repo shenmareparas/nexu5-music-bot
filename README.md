@@ -12,6 +12,7 @@ A clean, modern, and performant Discord Music Bot utilizing **discord.js v14**, 
 - 🗂️ **Instant Playlist Loading**: Supports YouTube playlists, mixes, and radios. Automatically begins playing the first song instantly while resolving and loading the rest in the background.
 - 🔒 **DAVE Protocol Ready**: Preconfigured with `@snazzah/davey` to support Discord's E2E voice encryption protocols. The `Disconnected` handler correctly races `Ready` state to avoid false-positive destroy calls triggered by the DAVE handshake.
 - 🛡️ **Fault-Tolerant Networking**: Resilient handling of UDP socket and voice connection error events (such as `EHOSTUNREACH`) to prevent uncaught exceptions and process crashes.
+- ⚙️ **Robust Process Spawning & Binary Management**: Automatically downloads the latest `yt-dlp` executable on startup with built-in retry logic (to handle transient network failures) and safeguards all child process `spawn()` executions to prevent unhandled exceptions.
 
 ## Prerequisites
 

@@ -71,18 +71,26 @@ async function ensureYtdlp() {
     return;
   }
 
-  console.log('[yt-dlp] Standalone binary not found. Downloading latest release...');
-  try {
-    const url = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp';
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    fs.writeFileSync(localPath, buffer);
-    fs.chmodSync(localPath, '755'); // Make executable
-    YTDLP_PATH = localPath;
-    console.log('[yt-dlp] Standalone binary downloaded successfully and made executable.');
-  } catch (error) {
-    console.error('[yt-dlp] Failed to download automatically:', error);
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    console.log(`[yt-dlp] Standalone binary not found. Downloading latest release... (Attempt ${attempt}/${maxAttempts})`);
+    try {
+      const url = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp';
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      fs.writeFileSync(localPath, buffer);
+      fs.chmodSync(localPath, '755'); // Make executable
+      YTDLP_PATH = localPath;
+      console.log('[yt-dlp] Standalone binary downloaded successfully and made executable.');
+      return;
+    } catch (error) {
+      console.error(`[yt-dlp] Attempt ${attempt} failed:`, error.message || error);
+      if (attempt < maxAttempts) {
+        console.log('[yt-dlp] Retrying in 3 seconds...');
+        await new Promise(res => setTimeout(res, 3000));
+      }
+    }
   }
 }
 
@@ -105,33 +113,50 @@ async function ytdlpSearch(query, limit = 1) {
   ];
 
   return new Promise((resolve) => {
-    const proc = spawn(YTDLP_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', d => { stdout += d.toString(); });
-    proc.stderr.on('data', d => { stderr += d.toString(); });
-    proc.on('close', () => {
-      const results = [];
-      for (const line of stdout.trim().split('\n')) {
-        if (!line) continue;
-        try {
-          const entry = JSON.parse(line);
-          const secs = entry.duration || 0;
-          const h = Math.floor(secs / 3600);
-          const m = Math.floor((secs % 3600) / 60);
-          const s = Math.floor(secs % 60);
-          const duration = h > 0
-            ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
-            : `${m}:${String(s).padStart(2,'0')}`;
-          results.push({
-            title: entry.title || entry.id,
-            url: entry.url || `https://www.youtube.com/watch?v=${entry.id}`,
-            duration
-          });
-        } catch (_) {}
+    let resolved = false;
+    const safeResolve = (val) => {
+      if (!resolved) {
+        resolved = true;
+        resolve(val);
       }
-      resolve(results);
-    });
+    };
+
+    try {
+      const proc = spawn(YTDLP_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', d => { stdout += d.toString(); });
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('error', err => {
+        console.error('[yt-dlp-search-error]', err);
+        safeResolve([]);
+      });
+      proc.on('close', () => {
+        const results = [];
+        for (const line of stdout.trim().split('\n')) {
+          if (!line) continue;
+          try {
+            const entry = JSON.parse(line);
+            const secs = entry.duration || 0;
+            const h = Math.floor(secs / 3600);
+            const m = Math.floor((secs % 3600) / 60);
+            const s = Math.floor(secs % 60);
+            const duration = h > 0
+              ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+              : `${m}:${String(s).padStart(2,'0')}`;
+            results.push({
+              title: entry.title || entry.id,
+              url: entry.url || `https://www.youtube.com/watch?v=${entry.id}`,
+              duration
+            });
+          } catch (_) {}
+        }
+        safeResolve(results);
+      });
+    } catch (err) {
+      console.error('[yt-dlp-search-spawn-error]', err);
+      safeResolve([]);
+    }
   });
 }
 
@@ -153,35 +178,52 @@ async function ytdlpVideoInfo(url) {
   ];
 
   return new Promise((resolve) => {
-    const proc = spawn(YTDLP_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', d => { stdout += d.toString(); });
-    proc.stderr.on('data', d => { stderr += d.toString(); });
-    proc.on('close', (code) => {
-      try {
-        const entry = JSON.parse(stdout.trim());
-        const secs = entry.duration || 0;
-        const h = Math.floor(secs / 3600);
-        const m = Math.floor((secs % 3600) / 60);
-        const s = Math.floor(secs % 60);
-        const duration = h > 0
-          ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
-          : `${m}:${String(s).padStart(2,'0')}`;
-        resolve({
-          title: entry.title || entry.id,
-          url: entry.webpage_url || url,
-          duration
-        });
-      } catch (_) {
-        // Log the actual yt-dlp error so it's visible in bot logs
-        console.error(`[ytdlpVideoInfo] yt-dlp exited with code ${code} for URL: ${url}`);
-        if (stderr.trim()) {
-          console.error(`[ytdlpVideoInfo] stderr:\n${stderr.trim()}`);
-        }
-        resolve(null);
+    let resolved = false;
+    const safeResolve = (val) => {
+      if (!resolved) {
+        resolved = true;
+        resolve(val);
       }
-    });
+    };
+
+    try {
+      const proc = spawn(YTDLP_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', d => { stdout += d.toString(); });
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('error', err => {
+        console.error('[yt-dlp-video-info-error]', err);
+        safeResolve(null);
+      });
+      proc.on('close', (code) => {
+        try {
+          const entry = JSON.parse(stdout.trim());
+          const secs = entry.duration || 0;
+          const h = Math.floor(secs / 3600);
+          const m = Math.floor((secs % 3600) / 60);
+          const s = Math.floor(secs % 60);
+          const duration = h > 0
+            ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+            : `${m}:${String(s).padStart(2,'0')}`;
+          safeResolve({
+            title: entry.title || entry.id,
+            url: entry.webpage_url || url,
+            duration
+          });
+        } catch (_) {
+          // Log the actual yt-dlp error so it's visible in bot logs
+          console.error(`[ytdlpVideoInfo] yt-dlp exited with code ${code} for URL: ${url}`);
+          if (stderr.trim()) {
+            console.error(`[ytdlpVideoInfo] stderr:\n${stderr.trim()}`);
+          }
+          safeResolve(null);
+        }
+      });
+    } catch (err) {
+      console.error('[yt-dlp-video-info-spawn-error]', err);
+      safeResolve(null);
+    }
   });
 }
 
@@ -688,20 +730,24 @@ async function loadYtPlaylist(interaction, query, voiceChannel, playTop = false)
     if (fs.existsSync(cookiesPath)) ytDlpArgs.unshift('--cookies', cookiesPath);
 
     const output = await new Promise((resolve, reject) => {
-      const proc = spawn(YTDLP_PATH, ytDlpArgs);
-      let stdout = '';
-      let stderr = '';
-      proc.stdout.on('data', d => { stdout += d.toString(); });
-      proc.stderr.on('data', d => {
-        const line = d.toString();
-        // Filter bun deprecation noise
-        if (!line.includes('bun support has been deprecated')) stderr += line;
-      });
-      proc.on('close', code => {
-        if (code !== 0 && stdout.trim() === '') reject(new Error(stderr.trim() || `yt-dlp exited ${code}`));
-        else resolve(stdout);
-      });
-      proc.on('error', reject);
+      try {
+        const proc = spawn(YTDLP_PATH, ytDlpArgs);
+        let stdout = '';
+        let stderr = '';
+        proc.stdout.on('data', d => { stdout += d.toString(); });
+        proc.stderr.on('data', d => {
+          const line = d.toString();
+          // Filter bun deprecation noise
+          if (!line.includes('bun support has been deprecated')) stderr += line;
+        });
+        proc.on('close', code => {
+          if (code !== 0 && stdout.trim() === '') reject(new Error(stderr.trim() || `yt-dlp exited ${code}`));
+          else resolve(stdout);
+        });
+        proc.on('error', reject);
+      } catch (err) {
+        reject(err);
+      }
     });
 
     entries = output.trim().split('\n').filter(Boolean).map(line => {

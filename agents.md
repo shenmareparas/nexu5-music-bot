@@ -112,3 +112,8 @@ bun start
 - **Symptom**: yt-dlp logs show `n challenge solving failed` and `ERROR: Requested format is not available`. Audio never plays.
 - **Root Cause**: YouTube's `n` parameter challenge requires a JavaScript runtime (Node.js, Deno) to solve the nsig (throttling signature). The Railway container runs Bun, which is not detected as a supported JS runtime by yt-dlp's built-in solver. Without solving the challenge, all format URLs are throttled/invalid.
 - **Fix**: Added `--extractor-args youtube:player_client=ios` to the streaming `yt-dlp` invocation. The iOS player client authenticates via OAuth-based tokens and does not issue an `n` challenge at all, bypassing the requirement for a JS runtime entirely.
+
+### Bun process crashes with `ENOENT` / `Executable not found in $PATH` on startup/play
+- **Symptom**: If the automatic download of the `yt-dlp` binary fails on startup (e.g., due to a `504 Gateway Timeout`), subsequent command execution triggers an uncaught `Executable not found in $PATH` error and crashes the entire bot runtime.
+- **Root Cause**: `ensureYtdlp()` did not retry on network failures, and spawning helpers (`ytdlpSearch`, `ytdlpVideoInfo`, `loadYtPlaylist`) lacked try-catch blocks or `.on('error')` listeners to handle missing executables gracefully.
+- **Fix**: Added a retry mechanism (up to 3 attempts with a 3-second delay) to `ensureYtdlp()` for downloading the binary. Additionally, wrapped `spawn()` commands in try-catch blocks and attached `.on('error', ...)` handlers to intercept spawn failures and prevent uncaught runtime exceptions.
