@@ -73,45 +73,6 @@ function getNodeJsPath() {
 }
 
 async function ensureYtdlp() {
-  // Diagnostics
-  console.log(`[diagnostics] PATH: ${process.env.PATH}`);
-  try {
-    const nodeVer = execSync('node -v', { encoding: 'utf8' }).trim();
-    console.log(`[diagnostics] 'node -v' output: ${nodeVer}`);
-  } catch (e) {
-    console.log(`[diagnostics] 'node -v' failed: ${e.message}`);
-  }
-  try {
-    const nodejsVer = execSync('nodejs -v', { encoding: 'utf8' }).trim();
-    console.log(`[diagnostics] 'nodejs -v' output: ${nodejsVer}`);
-  } catch (e) {
-    console.log(`[diagnostics] 'nodejs -v' failed: ${e.message}`);
-  }
-  try {
-    const pipShow = execSync('pip3 show yt-dlp', { encoding: 'utf8' }).trim();
-    console.log(`[diagnostics] 'pip3 show yt-dlp' output:\n${pipShow}`);
-  } catch (e) {
-    console.log(`[diagnostics] 'pip3 show' failed: ${e.message}`);
-  }
-  try {
-    const denoVer = execSync('deno --version', { encoding: 'utf8' }).trim();
-    console.log(`[diagnostics] 'deno --version' output:\n${denoVer}`);
-  } catch (e) {
-    console.log(`[diagnostics] 'deno --version' failed: ${e.message}`);
-  }
-  for (const file of ['/usr/bin/node', '/usr/bin/nodejs', '/usr/local/bin/node']) {
-    if (fs.existsSync(file)) {
-      try {
-        const link = fs.readlinkSync(file);
-        console.log(`[diagnostics] ${file} is a symlink to ${link}`);
-      } catch (e) {
-        console.log(`[diagnostics] ${file} exists (not a symlink or direct file)`);
-      }
-    } else {
-      console.log(`[diagnostics] ${file} does not exist`);
-    }
-  }
-
   if (process.env.YTDLP_PATH) {
     YTDLP_PATH = process.env.YTDLP_PATH;
     return;
@@ -285,7 +246,6 @@ async function ytdlpVideoInfo(url) {
     '--dump-json',
     '--no-playlist',
     '--no-warnings',
-    '-v',
     // Fall back to ios, web, mweb, android, and tvhtml5 clients.
     '--extractor-args', 'youtube:player_client=ios,web,mweb,android,tvhtml5;formats=missing_pot',
     '--js-runtimes', 'deno',
@@ -606,7 +566,6 @@ class GuildQueue {
       const ytDlpArgs = [
         '--no-update',
         '--no-playlist',
-        '-v',
         // Use a client fallback list: ios (fast, no n-challenge, no-cookies), and web/mweb/android/tvhtml5 (supports cookies, solves n-challenge with Deno/Node.js)
         '--extractor-args', 'youtube:player_client=ios,web,mweb,android,tvhtml5;formats=missing_pot',
         '--js-runtimes', 'deno',
