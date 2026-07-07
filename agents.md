@@ -116,3 +116,8 @@ bun start
 - **Symptom**: If the automatic download of the `yt-dlp` binary fails on startup (e.g., due to a `504 Gateway Timeout`), subsequent command execution triggers an uncaught `Executable not found in $PATH` error and crashes the entire bot runtime.
 - **Root Cause**: `ensureYtdlp()` did not retry on network failures, and spawning helpers (`ytdlpSearch`, `ytdlpVideoInfo`, `loadYtPlaylist`) lacked try-catch blocks or `.on('error')` listeners to handle missing executables gracefully.
 - **Fix**: Added a retry mechanism (up to 3 attempts with a 3-second delay) to `ensureYtdlp()` for downloading the binary. Additionally, wrapped `spawn()` commands in try-catch blocks and attached `.on('error', ...)` handlers to intercept spawn failures and prevent uncaught runtime exceptions.
+
+### Local standalone binary overrides pip-installed `yt-dlp` (causing n challenge solver failures)
+- **Symptom**: `yt-dlp` fails with `n challenge solving failed` even after Node.js and pip-installed `yt-dlp[default]` are set up in the Dockerfile.
+- **Root Cause**: `ensureYtdlp()` was checking for a local standalone binary at `/app/yt-dlp` (downloaded during previous failures or local setups) and preferring it. Standalone binaries downloaded directly from GitHub do not bundle the Embedded JavaScript (EJS) challenge-solving scripts required to bridge `yt-dlp` with the Node.js runtime.
+- **Fix**: Improved `ensureYtdlp()` to check absolute system installation paths (e.g., `/usr/local/bin/yt-dlp`) first. If a system package is detected, the bot unlinks any local standalone binary at `/app/yt-dlp` to prevent conflict and uses the system package with full EJS script support.

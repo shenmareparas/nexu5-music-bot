@@ -40,18 +40,29 @@ const { execSync } = require('child_process');
 
 let YTDLP_PATH = 'yt-dlp';
 
-function hasSystemYtdlp() {
-  try {
-    execSync('which yt-dlp', { stdio: 'ignore' });
-    return true;
-  } catch (e) {
-    try {
-      execSync('command -v yt-dlp', { stdio: 'ignore' });
-      return true;
-    } catch (err) {
-      return false;
+function getSystemYtdlpPath() {
+  const paths = [
+    '/usr/local/bin/yt-dlp',
+    '/usr/bin/yt-dlp',
+    '/root/.local/bin/yt-dlp',
+    '/home/railway/.local/bin/yt-dlp'
+  ];
+  for (const p of paths) {
+    if (fs.existsSync(p)) {
+      return p;
     }
   }
+
+  try {
+    const path = execSync('which yt-dlp', { encoding: 'utf8' }).trim();
+    if (path) return path;
+  } catch (e) {
+    try {
+      const path = execSync('command -v yt-dlp', { encoding: 'utf8' }).trim();
+      if (path) return path;
+    } catch (err) {}
+  }
+  return null;
 }
 
 async function ensureYtdlp() {
@@ -60,8 +71,18 @@ async function ensureYtdlp() {
     return;
   }
 
-  if (hasSystemYtdlp()) {
-    YTDLP_PATH = 'yt-dlp';
+  const systemPath = getSystemYtdlpPath();
+  if (systemPath) {
+    YTDLP_PATH = systemPath;
+    console.log(`[yt-dlp] Using system pip-installed yt-dlp at: ${systemPath}`);
+    // Clean up local standalone binary if it was downloaded previously to prevent conflicts
+    const localPath = path.join(__dirname, 'yt-dlp');
+    if (fs.existsSync(localPath)) {
+      try {
+        fs.unlinkSync(localPath);
+        console.log('[yt-dlp] Cleaned up local standalone binary.');
+      } catch (e) {}
+    }
     return;
   }
 
