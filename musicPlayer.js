@@ -246,8 +246,8 @@ async function ytdlpVideoInfo(url) {
     '--dump-json',
     '--no-playlist',
     '--no-warnings',
-    // Fall back to ios, web, mweb, android, and tvhtml5 clients.
-    '--extractor-args', 'youtube:player_client=ios,web,mweb,android,tvhtml5;formats=missing_pot',
+    // Fall back to ios, web_embedded, mweb, android, web, and tv clients.
+    '--extractor-args', 'youtube:player_client=ios,web_embedded,mweb,android,web,tv;formats=missing_pot',
     '--js-runtimes', 'deno',
     '--js-runtimes', `node:${getNodeJsPath()}`,
     '--remote-components', 'ejs:github',
@@ -566,8 +566,8 @@ class GuildQueue {
       const ytDlpArgs = [
         '--no-update',
         '--no-playlist',
-        // Use a client fallback list: ios (fast, no n-challenge, no-cookies), and web/mweb/android/tvhtml5 (supports cookies, solves n-challenge with Deno/Node.js)
-        '--extractor-args', 'youtube:player_client=ios,web,mweb,android,tvhtml5;formats=missing_pot',
+        // Use a client fallback list: ios, web_embedded, mweb, android, web, and tv
+        '--extractor-args', 'youtube:player_client=ios,web_embedded,mweb,android,web,tv;formats=missing_pot',
         '--js-runtimes', 'deno',
         '--js-runtimes', `node:${getNodeJsPath()}`,
         '--remote-components', 'ejs:github',
