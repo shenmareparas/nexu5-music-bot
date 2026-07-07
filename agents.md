@@ -10,6 +10,7 @@ This document provides a guide for AI developer agents and engineers working on 
 - **Audio Downloader / Metadata**: `yt-dlp` (spawning child processes). Used for **all** YouTube operations: search, video metadata, playlist enumeration, and audio streaming. `play-dl` is retained only for Spotify URL parsing (`play.spotify()`).
 - **Audio Transcoder**: `ffmpeg` (via `ffmpeg-static` or system path).
   - *Optimization Note*: The `-re` (real-time) input flag has been removed from `ffmpeg` arguments. This allows `ffmpeg` to download and transcode audio as fast as possible, buffering the stream to prevent premature cutoffs and `Idle` state triggers caused by network jitter.
+  - *`player_skip` Scope*: `--extractor-args youtube:player_skip=webpage,configs` is passed **only** to `ytdlpSearch` and `ytdlpVideoInfo` (metadata-only calls). It must **not** be passed to the streaming `yt-dlp` invocation in `playNext()` — yt-dlp needs to fetch the player configs to resolve the signed audio stream URL. Applying it to streaming silently breaks direct YouTube URL playback while text-search continues to work (search only dumps flat JSON, no stream URL needed).
 
 ## Architecture & Code Map
 
@@ -96,3 +97,8 @@ bun start
 - **Symptom**: Bot joins the voice channel and immediately leaves; logs show `[connection] Reconnect failed, destroying connection` right after `[connection] State: Ready`.
 - **Root Cause**: The DAVE E2E encryption handshake (`@snazzah/davey`) briefly fires `VoiceConnectionStatus.Disconnected` as part of normal protocol negotiation, before the connection fully settles into `Ready`. The old `Disconnected` handler only raced `Signalling` and `Connecting` — both already past — so the 5-second timeout expired and `destroy()` was incorrectly called.
 - **Fix**: Added `entersState(this.connection, VoiceConnectionStatus.Ready, 5000)` to the `Promise.race()` inside the `Disconnected` handler in `connect()`. If the connection reaches `Ready`, the disconnect is treated as a harmless transient blip.
+
+### Direct YouTube URL (`/play <url>`) does not play; text search works fine
+- **Symptom**: Pasting a YouTube link into `/play` produces no audio or silently fails; searching by song name plays correctly.
+- **Root Cause**: The streaming `yt-dlp` invocation in `playNext()` included `--extractor-args youtube:player_skip=webpage,configs`. This flag skips the player config fetch that yt-dlp needs to resolve the signed, time-limited audio stream URL. Text search is unaffected because `ytdlpSearch` only dumps flat JSON metadata — no stream URL is resolved at that stage.
+- **Fix**: Removed `--extractor-args youtube:player_skip=webpage,configs` (and the unused `--remote-components` / `--js-runtimes` flags) from the streaming invocation in `playNext()`. The `player_skip` flag is still correctly applied in `ytdlpSearch` and `ytdlpVideoInfo` where only metadata is fetched.

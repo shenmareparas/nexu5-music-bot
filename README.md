@@ -103,6 +103,6 @@ This bot is fully configured for deployment on [Railway](https://railway.app) us
 > 5. Paste these cookies into your environment or `cookies.txt`.
 
 > [!NOTE]
-> All YouTube interactions — including **search, metadata lookups, and audio streaming** — are routed through `yt-dlp`. This means `--extractor-args "youtube:player_skip=webpage,configs"` and your `cookies.txt` are applied uniformly across every operation, giving consistent 429-bypass coverage. `play-dl` is retained only for Spotify URL parsing (`play.spotify()`).
+> All YouTube interactions — including **search, metadata lookups, and audio streaming** — are routed through `yt-dlp`. `cookies.txt` is passed to every `yt-dlp` call for authenticated access. `--extractor-args "youtube:player_skip=webpage,configs"` is applied only to metadata-only calls (`ytdlpSearch`, `ytdlpVideoInfo`) to skip unnecessary HTTP round-trips; it is intentionally omitted from the streaming invocation so that yt-dlp can resolve the signed audio stream URL. `play-dl` is retained only for Spotify URL parsing (`play.spotify()`).
 
 
