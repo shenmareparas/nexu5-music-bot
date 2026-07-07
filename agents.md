@@ -102,3 +102,8 @@ bun start
 - **Symptom**: Pasting a YouTube link into `/play` produces no audio or silently fails; searching by song name plays correctly.
 - **Root Cause**: The streaming `yt-dlp` invocation in `playNext()` included `--extractor-args youtube:player_skip=webpage,configs`. This flag skips the player config fetch that yt-dlp needs to resolve the signed, time-limited audio stream URL. Text search is unaffected because `ytdlpSearch` only dumps flat JSON metadata — no stream URL is resolved at that stage.
 - **Fix**: Removed `--extractor-args youtube:player_skip=webpage,configs` (and the unused `--remote-components` / `--js-runtimes` flags) from the streaming invocation in `playNext()`. The `player_skip` flag is still correctly applied in `ytdlpSearch` and `ytdlpVideoInfo` where only metadata is fetched.
+
+### `/play <url>` fails with "n challenge solving failed" / "Requested format is not available"
+- **Symptom**: yt-dlp logs show `n challenge solving failed` and `ERROR: Requested format is not available`. Audio never plays.
+- **Root Cause**: YouTube's `n` parameter challenge requires a JavaScript runtime (Node.js, Deno) to solve the nsig (throttling signature). The Railway container runs Bun, which is not detected as a supported JS runtime by yt-dlp's built-in solver. Without solving the challenge, all format URLs are throttled/invalid.
+- **Fix**: Added `--extractor-args youtube:player_client=ios` to the streaming `yt-dlp` invocation. The iOS player client authenticates via OAuth-based tokens and does not issue an `n` challenge at all, bypassing the requirement for a JS runtime entirely.

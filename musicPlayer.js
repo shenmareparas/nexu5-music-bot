@@ -458,7 +458,11 @@ class GuildQueue {
       const ytDlpArgs = [
         '--no-update',
         '--no-playlist',
-        '-f', 'bestaudio[ext=webm]/bestaudio/best',
+        // Use iOS player client — bypasses the JavaScript n-challenge solver requirement.
+        // The iOS client uses OAuth-based tokens instead of the JS-based nsig challenge,
+        // making it the reliable choice for server-side bots without a Node/Deno runtime.
+        '--extractor-args', 'youtube:player_client=ios',
+        '-f', 'bestaudio/best',
         '-o', '-',                             // stream to stdout
       ];
 
