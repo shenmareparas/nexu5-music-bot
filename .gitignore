@@ -3,3 +3,4 @@ node_modules/
 cookies.txt
 .DS_Store
 yt-dlp
+package-lock.json

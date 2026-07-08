@@ -39,6 +39,7 @@ if (process.env.YOUTUBE_COOKIES) {
 const { execSync } = require('child_process');
 
 let YTDLP_PATH = 'yt-dlp';
+let ytDlpSupportsNewFlags = true; // set to false at runtime if the installed yt-dlp is too old for --js-runtimes/--remote-components
 
 function getSystemYtdlpPath() {
   const paths = [
@@ -70,6 +71,18 @@ function getNodeJsPath() {
     return '/usr/bin/nodejs';
   }
   return 'node';
+}
+
+// Returns the --js-runtimes/--remote-components args only if the installed
+// yt-dlp is known to support them; otherwise returns an empty array so older
+// binaries don't hard-fail with "no such option".
+function getJsRuntimeArgs() {
+  if (!ytDlpSupportsNewFlags) return [];
+  return [
+    '--js-runtimes', 'deno',
+    '--js-runtimes', `node:${getNodeJsPath()}`,
+    '--remote-components', 'ejs:github',
+  ];
 }
 
 async function ensureYtdlp() {
@@ -124,6 +137,29 @@ async function ensureYtdlp() {
 
 // Check and download on startup
 ensureYtdlp();
+
+// After resolving the yt-dlp path, verify it actually supports the newer flags
+// we rely on (--js-runtimes / --remote-components). Older system-installed
+// binaries (common on apt-based images) predate these and will hard-fail
+// every playback attempt with "no such option" if left unchecked.
+async function checkYtdlpFlagSupport() {
+  // ensureYtdlp() is async; give it a moment to resolve YTDLP_PATH first
+  await ensureYtdlp();
+  try {
+    const helpOutput = execSync(`"${YTDLP_PATH}" --help`, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    if (!helpOutput.includes('--js-runtimes') || !helpOutput.includes('--remote-components')) {
+      ytDlpSupportsNewFlags = false;
+      console.warn('[yt-dlp] WARNING: The installed yt-dlp does not support --js-runtimes/--remote-components. ' +
+        'Falling back to legacy args. Playback reliability will be degraded — please upgrade yt-dlp ' +
+        '(pip install -U yt-dlp) to a version >= 2025.09.26.');
+    } else {
+      console.log('[yt-dlp] Confirmed installed yt-dlp supports --js-runtimes/--remote-components.');
+    }
+  } catch (err) {
+    console.warn('[yt-dlp] Could not verify flag support via --help:', err.message);
+  }
+}
+checkYtdlpFlagSupport();
 
 /**
  * Search YouTube via yt-dlp to avoid 429s from play-dl's raw HTTP requests.
@@ -248,9 +284,7 @@ async function ytdlpVideoInfo(url) {
     '--no-warnings',
     // Fall back to ios, web_embedded, mweb, and tv clients.
     '--extractor-args', 'youtube:player_client=ios,web_embedded,mweb,tv;formats=missing_pot',
-    '--js-runtimes', 'deno',
-    '--js-runtimes', `node:${getNodeJsPath()}`,
-    '--remote-components', 'ejs:github',
+    ...getJsRuntimeArgs(),
   ];
 
   if (process.env.FORCE_IPV6 === 'true') {
@@ -352,6 +386,7 @@ class GuildQueue {
     this.ffmpegProcess = null;
     this.usedCookies = false;
     this.playbackFailed = false;
+    this.lastYtDlpError = null; // holds the most recent meaningful yt-dlp stderr line(s) for diagnostics
 
     // Handle player states
     this.player.on(AudioPlayerStatus.Idle, () => {
@@ -364,9 +399,13 @@ class GuildQueue {
           this.playNext(true);
           return;
         } else {
-          this.textChannel.send(`⚠️ Failed to play **${this.songs[0]?.title || 'Unknown Song'}** (Requested format not available).`)
+          const reason = this.lastYtDlpError
+            ? `\`\`\`${this.lastYtDlpError.slice(0, 900)}\`\`\``
+            : '(no error output captured — check server logs)';
+          this.textChannel.send(`⚠️ Failed to play **${this.songs[0]?.title || 'Unknown Song'}**:\n${reason}`)
             .then(msg => this.sessionMessages.push(msg))
             .catch(() => {});
+          this.lastYtDlpError = null;
         }
       }
       this.songs.shift(); // Remove completed song
@@ -575,9 +614,7 @@ class GuildQueue {
         '--no-playlist',
         // Use a client fallback list: ios, web_embedded, mweb, and tv
         '--extractor-args', 'youtube:player_client=ios,web_embedded,mweb,tv;formats=missing_pot',
-        '--js-runtimes', 'deno',
-        '--js-runtimes', `node:${getNodeJsPath()}`,
-        '--remote-components', 'ejs:github',
+        ...getJsRuntimeArgs(),
         '-f', 'bestaudio/best',
         '-o', '-',                             // stream to stdout
       ];
@@ -620,8 +657,15 @@ class GuildQueue {
       });
       this.ytDlpProcess.stdout.pipe(this.ffmpegProcess.stdin);
 
+      // Rolling buffer of recent stderr lines, used to surface the real failure reason.
+      // Buffer raw chunks too, in case a final partial line has no trailing newline yet
+      // when the process exits.
+      const stderrBuffer = [];
+      let stderrRaw = '';
       this.ytDlpProcess.stderr.on('data', data => {
-        const lines = data.toString().split('\n');
+        const chunk = data.toString();
+        stderrRaw += chunk;
+        const lines = chunk.split('\n');
         for (let line of lines) {
           line = line.trim();
           if (line) {
@@ -630,26 +674,67 @@ class GuildQueue {
               continue;
             }
             console.log(`[yt-dlp-stderr] ${line}`);
+            // Keep any non-trivial line — yt-dlp errors/warnings don't always
+            // start exactly with "ERROR"/"WARNING" (ANSI color codes, [prefix] tags, etc.)
+            stderrBuffer.push(line);
+            if (stderrBuffer.length > 15) stderrBuffer.shift();
           }
         }
       });
 
-      this.ytDlpProcess.on('error', err => console.error('[yt-dlp-error]', err));
+      let ytDlpSignal = null;
+      this.ytDlpProcess.on('error', err => {
+        console.error('[yt-dlp-error]', err);
+        this.lastYtDlpError = `spawn error: ${err.message}`;
+      });
+      this.ytDlpProcess.on('exit', (code, signal) => {
+        ytDlpSignal = signal;
+        if (signal) console.log(`[yt-dlp] received signal: ${signal}`);
+      });
       this.ytDlpProcess.on('close', code => {
         console.log(`[yt-dlp] exited with code ${code}`);
         if (code !== 0 && !this.ytDlpProcess.killedByBot) {
           this.playbackFailed = true;
+          if (stderrBuffer.length > 0) {
+            this.lastYtDlpError = stderrBuffer.join('\n');
+            if (this.lastYtDlpError.includes('no such option')) {
+              this.lastYtDlpError += '\n\n⚠️ Your installed yt-dlp version is out of date and missing options this bot relies on. Run `pip install -U yt-dlp` on the server.';
+              ytDlpSupportsNewFlags = false; // avoid repeating this failure on future songs
+            }
+          } else if (ytDlpSignal) {
+            this.lastYtDlpError = `yt-dlp was killed by signal ${ytDlpSignal} (exit code ${code}) — likely the download pipe closed early (e.g. ffmpeg failed to start or stdin was closed prematurely). No stderr was produced.`;
+          } else if (code === 2) {
+            this.lastYtDlpError = `yt-dlp exited with code 2 (generic/unspecified error) and produced no stderr output. This usually means the process was terminated before it could report an error — check server resource limits (memory/CPU) or network connectivity to YouTube.`;
+          } else {
+            this.lastYtDlpError = `yt-dlp exited with code ${code} (no stderr captured)`;
+          }
         }
       });
 
+      const ffmpegStderrBuffer = [];
       this.ffmpegProcess.stderr.on('data', data => {
         const line = data.toString().trim();
-        if (line) console.log(`[ffmpeg-stderr] ${line}`);
+        if (line) {
+          console.log(`[ffmpeg-stderr] ${line}`);
+          if (/error/i.test(line)) {
+            ffmpegStderrBuffer.push(line);
+            if (ffmpegStderrBuffer.length > 10) ffmpegStderrBuffer.shift();
+          }
+        }
       });
 
-      this.ffmpegProcess.on('error', err => console.error('[ffmpeg-error] process error:', err));
+      this.ffmpegProcess.on('error', err => {
+        console.error('[ffmpeg-error] process error:', err);
+        this.lastYtDlpError = `ffmpeg spawn error: ${err.message}`;
+      });
       this.ffmpegProcess.on('close', code => {
         console.log(`[ffmpeg] exited with code ${code}`);
+        // Only attribute failure to ffmpeg if yt-dlp itself exited cleanly (0),
+        // otherwise the yt-dlp handler above already has the more useful root cause.
+        if (code !== 0 && ffmpegStderrBuffer.length > 0 && (!this.lastYtDlpError || this.ytDlpProcess?.exitCode === 0)) {
+          this.playbackFailed = true;
+          this.lastYtDlpError = `[ffmpeg] ${ffmpegStderrBuffer.join('\n')}`;
+        }
       });
 
       const resource = createAudioResource(this.ffmpegProcess.stdout, {
