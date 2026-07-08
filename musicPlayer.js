@@ -283,7 +283,7 @@ async function ytdlpVideoInfo(url) {
     '--no-playlist',
     '--no-warnings',
     // Fall back to ios, web_embedded, mweb, and tv clients.
-    '--extractor-args', 'youtube:player_client=ios,web_embedded,mweb,tv;formats=missing_pot',
+    '--extractor-args', 'youtube:player_client=default,web_safari,web_embedded;formats=missing_pot',
     ...getJsRuntimeArgs(),
   ];
 
@@ -613,7 +613,7 @@ class GuildQueue {
         '--no-update',
         '--no-playlist',
         // Use a client fallback list: ios, web_embedded, mweb, and tv
-        '--extractor-args', 'youtube:player_client=ios,web_embedded,mweb,tv;formats=missing_pot',
+        '--extractor-args', 'youtube:player_client=default,web_safari,web_embedded;formats=missing_pot',
         ...getJsRuntimeArgs(),
         '-f', 'bestaudio/best',
         '-o', '-',                             // stream to stdout
