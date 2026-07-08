@@ -612,7 +612,7 @@ class GuildQueue {
       const ytDlpArgs = [
         '--no-update',
         '--no-playlist',
-        // Use a client fallback list: ios, web_embedded, mweb, and tv
+        // Use a YouTube client fallback list: default, web_safari, and web_embedded
         '--extractor-args', 'youtube:player_client=default,web_safari,web_embedded;formats=missing_pot',
         ...getJsRuntimeArgs(),
         '-f', 'bestaudio/best',
